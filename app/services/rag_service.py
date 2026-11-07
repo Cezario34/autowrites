@@ -29,15 +29,17 @@ class RAGService:
         self,
         chunks: list[str],
         embeddings: list[list[float]],
+        book_id: str,
         chapter_id: str | None = None,
     ) -> int:
         if not chunks:
             return 0
 
         chapter_id = chapter_id or str(uuid.uuid4())
-        ids = [f"{chapter_id}-{i}" for i in range(len(chunks))]
+        ids = [f"{book_id}-{chapter_id}-{i}" for i in range(len(chunks))]
         metadatas = [
-            {"chapter_id": chapter_id, "chunk_index": i} for i in range(len(chunks))
+            {"book_id": book_id, "chapter_id": chapter_id, "chunk_index": i}
+            for i in range(len(chunks))
         ]
         vector_store.add(
             ids=ids,
@@ -47,21 +49,35 @@ class RAGService:
         )
         return len(chunks)
 
-    def add_chapter(self, text: str, chapter_id: str | None = None) -> int:
-        """Нарезает главу, делает эмбеддинги и сохраняет в векторную базу."""
+    def add_chapter(
+        self,
+        text: str,
+        book_id: str,
+        chapter_id: str | None = None,
+    ) -> int:
+        """Нарезает главу, делает эмбеддинги и сохраняет в векторную базу книги."""
         chunks = split_text(text)
         if not chunks:
             return 0
 
         embeddings = embedding_service.embed_batch(chunks)
-        return self._save_chunks(chunks, embeddings, chapter_id)
+        return self._save_chunks(chunks, embeddings, book_id, chapter_id)
 
-    def query(self, text: str, n_results: int | None = None) -> list[str]:
-        """Ищет релевантные чанки по тексту."""
+    def query(
+        self,
+        text: str,
+        book_id: str,
+        n_results: int | None = None,
+    ) -> list[str]:
+        """Ищет релевантные чанки по тексту внутри одной книги."""
         # Берём только начало текста для эмбеддинга (чтобы не превысить контекст)
         query_text = text[:2000]
         query_embedding = embedding_service.embed(query_text)
-        results = vector_store.query(query_embedding, n_results=n_results)
+        results = vector_store.query(
+            query_embedding,
+            n_results=n_results,
+            where={"book_id": book_id},
+        )
 
         documents = results.get("documents", [[]])[0]
         return documents or []
@@ -69,6 +85,8 @@ class RAGService:
     def iter_process_chapter(
         self,
         text: str,
+        book_id: str,
+        book_title: str,
         add_to_store: bool = True,
     ) -> Iterator[dict]:
         """
@@ -79,7 +97,9 @@ class RAGService:
         4. отдаёт ответ модели по кускам
         """
         logger.info(
-            "этап: старт, символов=%s, в базу=%s",
+            "этап: старт, книга=%s (%s), символов=%s, в базу=%s",
+            book_title,
+            book_id,
             len(text),
             add_to_store,
         )
@@ -99,23 +119,29 @@ class RAGService:
                 )
                 embeddings = embedding_service.embed_batch(chunks)
                 yield _stage("store", "Сохраняю главу…")
-                chunks_added = self._save_chunks(chunks, embeddings)
+                chunks_added = self._save_chunks(chunks, embeddings, book_id)
                 logger.info("этап: запись в базу, чанков=%s", chunks_added)
             else:
                 logger.info("этап: запись в базу пропущена, чанков=0")
 
         yield _stage("search", "Ищу контекст…")
-        context_chunks = self.query(text, n_results=settings.top_k)
+        context_chunks = self.query(text, book_id, n_results=settings.top_k)
         logger.info("этап: поиск, фрагментов=%s", len(context_chunks))
         context = (
             "\n\n---\n\n".join(context_chunks)
             if context_chunks
             else "Контекст отсутствует."
         )
-        prompt = CHECK_CHAPTER_PROMPT.format(context=context, chapter=text)
+        prompt = CHECK_CHAPTER_PROMPT.format(
+            book=book_title,
+            context=context,
+            chapter=text,
+        )
 
         yield {
             "type": "meta",
+            "book_id": book_id,
+            "book_title": book_title,
             "chunks_added": chunks_added,
             "context_chunks": context_chunks,
             "original_length": len(text),
@@ -131,11 +157,22 @@ class RAGService:
         logger.info("этап: готово, символов ответа=%s", sum(len(part) for part in parts))
         yield {"type": "done"}
 
-    def process_chapter(self, text: str, add_to_store: bool = True) -> RAGResult:
+    def process_chapter(
+        self,
+        text: str,
+        book_id: str,
+        book_title: str,
+        add_to_store: bool = True,
+    ) -> RAGResult:
         parts: list[str] = []
         context_chunks: list[str] = []
         chunks_added = 0
-        for event in self.iter_process_chapter(text, add_to_store=add_to_store):
+        for event in self.iter_process_chapter(
+            text,
+            book_id=book_id,
+            book_title=book_title,
+            add_to_store=add_to_store,
+        ):
             if event["type"] == "token":
                 parts.append(event["text"])
             elif event["type"] == "meta":

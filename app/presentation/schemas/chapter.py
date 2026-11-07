@@ -3,6 +3,7 @@ from pydantic import BaseModel
 
 class ChapterRequest(BaseModel):
     text: str
+    book_id: str
     add_to_store: bool = True
 
 

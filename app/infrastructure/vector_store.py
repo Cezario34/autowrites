@@ -31,16 +31,27 @@ class VectorStore:
             metadatas=metadatas,
         )
 
+    def count_where(self, where: dict[str, Any]) -> int:
+        found = self.collection.get(where=where, include=["metadatas"])
+        return len(found.get("ids") or [])
+
     def query(
         self,
         query_embedding: list[float],
         n_results: int | None = None,
+        where: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         n_results = n_results or settings.top_k
+        if where is not None:
+            available = self.count_where(where)
+            if available == 0:
+                return {"documents": [[]], "metadatas": [[]], "distances": [[]]}
+            n_results = min(n_results, available)
         return self.collection.query(
             query_embeddings=[query_embedding],
             n_results=n_results,
             include=["documents", "metadatas", "distances"],
+            where=where,
         )
 
     def count(self) -> int:

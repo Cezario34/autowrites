@@ -33,6 +33,43 @@
         color: #534d44;
       }
 
+      .books {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem 1rem;
+        align-items: end;
+        margin: 0 0 1.25rem;
+      }
+
+      .books label,
+      .field {
+        display: flex;
+        flex-direction: column;
+        gap: 0.25rem;
+      }
+
+      select,
+      .books input {
+        font: inherit;
+        padding: 0.4rem 0.55rem;
+        border: 1px solid #d4cfc4;
+        border-radius: 6px;
+        background: #fff;
+      }
+
+      select {
+        min-width: 16rem;
+      }
+
+      .books input {
+        min-width: 14rem;
+      }
+
+      button.secondary {
+        background: #fff;
+        color: #1c1a16;
+      }
+
       textarea {
         width: 100%;
         min-height: 16rem;
@@ -92,7 +129,18 @@
   <body>
     <main>
       <h1>Автописатель</h1>
-      <p class="lead">Разбор главы: противоречия, дыры и повторы.</p>
+      <p class="lead">Выберите книгу. Глава режется и ищется только внутри неё.</p>
+      <form id="book-form" class="books">
+        <label>
+          Книга
+          <select id="book"></select>
+        </label>
+        <label>
+          Новая книга
+          <input id="new-book" maxlength="200" placeholder="Название" />
+        </label>
+        <button id="create-book" class="secondary" type="submit">Создать</button>
+      </form>
       <form id="form">
         <label for="text">Глава</label>
         <textarea id="text" name="text" required></textarea>
@@ -110,6 +158,10 @@
       <p id="answer"></p>
     </main>
     <script>
+      const bookForm = document.querySelector("#book-form");
+      const bookSelect = document.querySelector("#book");
+      const newBook = document.querySelector("#new-book");
+      const createBook = document.querySelector("#create-book");
       const form = document.querySelector("#form");
       const text = document.querySelector("#text");
       const store = document.querySelector("#store");
@@ -119,6 +171,61 @@
       const meta = document.querySelector("#meta");
       const answer = document.querySelector("#answer");
 
+      function showStatus(message) {
+        status.hidden = false;
+        status.textContent = message;
+      }
+
+      async function loadBooks(selectedId) {
+        const response = await fetch("/api/books");
+        if (!response.ok) {
+          throw new Error("Не удалось загрузить книги");
+        }
+        const books = await response.json();
+        const current = selectedId || bookSelect.value;
+        bookSelect.replaceChildren();
+        const placeholder = document.createElement("option");
+        placeholder.value = "";
+        placeholder.textContent = books.length
+          ? "Выберите книгу"
+          : "Сначала создайте книгу";
+        bookSelect.append(placeholder);
+        for (const book of books) {
+          const option = document.createElement("option");
+          option.value = book.id;
+          option.textContent = book.title + " (" + book.chunk_count + ")";
+          bookSelect.append(option);
+        }
+        if (books.length === 1) {
+          bookSelect.value = books[0].id;
+        } else if (current && books.some((book) => book.id === current)) {
+          bookSelect.value = current;
+        }
+      }
+
+      bookForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        createBook.disabled = true;
+        try {
+          const response = await fetch("/api/books", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ title: newBook.value }),
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(payload.detail || "Не удалось создать книгу");
+          }
+          newBook.value = "";
+          await loadBooks(payload.id);
+          showStatus("Книга «" + payload.title + "» создана");
+        } catch (error) {
+          showStatus(error.message || "Не удалось создать книгу");
+        } finally {
+          createBook.disabled = false;
+        }
+      });
+
       function showProgress(message) {
         progress.hidden = false;
         status.hidden = false;
@@ -127,6 +234,10 @@
 
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
+        if (!bookSelect.value) {
+          showStatus("Сначала создайте или выберите книгу");
+          return;
+        }
         answer.textContent = "";
         meta.textContent = "";
         submit.disabled = true;
@@ -138,6 +249,7 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               text: text.value,
+              book_id: bookSelect.value,
               add_to_store: store.checked,
             }),
           });
@@ -164,7 +276,9 @@
                 showProgress(item.message);
               } else if (item.type === "meta") {
                 meta.textContent =
-                  "В базу: " +
+                  "«" +
+                  item.book_title +
+                  "» · В базу: " +
                   item.chunks_added +
                   " · Контекст: " +
                   item.context_chunks.length;
@@ -185,7 +299,13 @@
           progress.hidden = true;
         } finally {
           submit.disabled = false;
+          const selected = bookSelect.value;
+          loadBooks(selected).catch(() => {});
         }
+      });
+
+      loadBooks().catch((error) => {
+        showStatus(error.message || "Не удалось загрузить книги");
       });
     </script>
   </body>
