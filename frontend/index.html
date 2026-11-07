@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Автописатель</title>
+    <style>
+      :root {
+        color-scheme: light;
+      }
+
+      body {
+        margin: 0;
+        background: #f6f4ef;
+        color: #1c1a16;
+        font: 16px/1.5 "Iowan Old Style", Palatino, Georgia, serif;
+      }
+
+      main {
+        max-width: 42rem;
+        margin: 0 auto;
+        padding: 2rem 1.25rem 3rem;
+      }
+
+      h1 {
+        margin: 0 0 0.35rem;
+        font-size: 1.7rem;
+        font-weight: 600;
+      }
+
+      .lead {
+        margin: 0 0 1.25rem;
+        color: #534d44;
+      }
+
+      textarea {
+        width: 100%;
+        min-height: 16rem;
+        box-sizing: border-box;
+        padding: 0.75rem;
+        border: 1px solid #d4cfc4;
+        border-radius: 6px;
+        background: #fff;
+        font: inherit;
+      }
+
+      .store {
+        display: flex;
+        gap: 0.5rem;
+        align-items: center;
+        margin: 0.75rem 0;
+      }
+
+      button {
+        font: inherit;
+        padding: 0.45rem 0.9rem;
+        border: 1px solid #1c1a16;
+        border-radius: 6px;
+        background: #1c1a16;
+        color: #fff;
+      }
+
+      button:disabled {
+        opacity: 0.55;
+      }
+
+      .progress {
+        margin-top: 1rem;
+      }
+
+      progress {
+        display: block;
+        width: 100%;
+        height: 0.55rem;
+      }
+
+      #status {
+        margin: 0.4rem 0 0;
+      }
+
+      #meta {
+        margin: 0.75rem 0 0;
+        color: #534d44;
+      }
+
+      #answer {
+        white-space: pre-wrap;
+        margin: 1rem 0 0;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Автописатель</h1>
+      <p class="lead">Разбор главы: противоречия, дыры и повторы.</p>
+      <form id="form">
+        <label for="text">Глава</label>
+        <textarea id="text" name="text" required></textarea>
+        <label class="store">
+          <input id="store" type="checkbox" checked />
+          Добавить главу в базу
+        </label>
+        <button id="submit" type="submit">Разобрать главу</button>
+      </form>
+      <div class="progress" id="progress" hidden>
+        <progress aria-label="Идёт обработка"></progress>
+      </div>
+      <p id="status" role="status" aria-live="polite" hidden></p>
+      <p id="meta"></p>
+      <p id="answer"></p>
+    </main>
+    <script>
+      const form = document.querySelector("#form");
+      const text = document.querySelector("#text");
+      const store = document.querySelector("#store");
+      const submit = document.querySelector("#submit");
+      const progress = document.querySelector("#progress");
+      const status = document.querySelector("#status");
+      const meta = document.querySelector("#meta");
+      const answer = document.querySelector("#answer");
+
+      function showProgress(message) {
+        progress.hidden = false;
+        status.hidden = false;
+        status.textContent = message;
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        answer.textContent = "";
+        meta.textContent = "";
+        submit.disabled = true;
+        showProgress("Идёт обработка…");
+
+        try {
+          const response = await fetch("/api/process-chapter", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              text: text.value,
+              add_to_store: store.checked,
+            }),
+          });
+
+          if (!response.ok) {
+            const payload = await response.json().catch(() => ({}));
+            throw new Error(payload.detail || "Не удалось обработать главу");
+          }
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              const item = JSON.parse(line);
+              if (item.type === "stage" && item.message) {
+                showProgress(item.message);
+              } else if (item.type === "meta") {
+                meta.textContent =
+                  "В базу: " +
+                  item.chunks_added +
+                  " · Контекст: " +
+                  item.context_chunks.length;
+              } else if (item.type === "token") {
+                answer.textContent += item.text;
+              } else if (item.type === "error") {
+                throw new Error(item.detail || "Не удалось обработать главу");
+              } else if (item.type === "done") {
+                status.hidden = false;
+                status.textContent = "Готово";
+                progress.hidden = true;
+              }
+            }
+          }
+        } catch (error) {
+          status.hidden = false;
+          status.textContent = error.message || "Не удалось обработать главу";
+          progress.hidden = true;
+        } finally {
+          submit.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>
