@@ -81,6 +81,12 @@
         font: inherit;
       }
 
+      .count {
+        margin: 0.35rem 0 0;
+        color: #534d44;
+        text-align: right;
+      }
+
       .store {
         display: flex;
         gap: 0.5rem;
@@ -143,7 +149,8 @@
       </form>
       <form id="form">
         <label for="text">Глава</label>
-        <textarea id="text" name="text" required></textarea>
+        <textarea id="text" name="text" required aria-describedby="char-count"></textarea>
+        <p id="char-count" class="count">0 символов</p>
         <label class="store">
           <input id="store" type="checkbox" checked />
           Добавить главу в базу
@@ -164,12 +171,30 @@
       const createBook = document.querySelector("#create-book");
       const form = document.querySelector("#form");
       const text = document.querySelector("#text");
+      const charCount = document.querySelector("#char-count");
       const store = document.querySelector("#store");
       const submit = document.querySelector("#submit");
       const progress = document.querySelector("#progress");
       const status = document.querySelector("#status");
       const meta = document.querySelector("#meta");
       const answer = document.querySelector("#answer");
+
+      function symbolWord(count) {
+        const mod100 = count % 100;
+        const mod10 = count % 10;
+        if (mod100 > 10 && mod100 < 20) return "символов";
+        if (mod10 > 1 && mod10 < 5) return "символа";
+        if (mod10 === 1) return "символ";
+        return "символов";
+      }
+
+      function updateCharCount() {
+        const count = text.value.length;
+        charCount.textContent = count + " " + symbolWord(count);
+      }
+
+      text.addEventListener("input", updateCharCount);
+      updateCharCount();
 
       function showStatus(message) {
         status.hidden = false;
