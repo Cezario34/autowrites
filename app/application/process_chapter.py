@@ -2,6 +2,7 @@ import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
 
+from app.application.books import require_book
 from app.services.rag_service import RAGResult, rag_service
 
 logger = logging.getLogger("app.chapter")
@@ -19,18 +20,32 @@ class ProcessedChapter:
     original_length: int
 
 
-def open_chapter_stream(text: str, add_to_store: bool = True) -> Iterator[dict]:
+def open_chapter_stream(
+    text: str,
+    book_id: str,
+    add_to_store: bool = True,
+) -> Iterator[dict]:
+    book = require_book(book_id)
     if not text.strip():
         logger.info("этап: отказ, пустая глава")
         raise EmptyChapterError
-    return rag_service.iter_process_chapter(text, add_to_store=add_to_store)
+    return rag_service.iter_process_chapter(
+        text,
+        book_id=book.id,
+        book_title=book.title,
+        add_to_store=add_to_store,
+    )
 
 
-def process_chapter(text: str, add_to_store: bool = True) -> ProcessedChapter:
+def process_chapter(
+    text: str,
+    book_id: str,
+    add_to_store: bool = True,
+) -> ProcessedChapter:
     parts: list[str] = []
     context_chunks: list[str] = []
     chunks_added = 0
-    for event in open_chapter_stream(text, add_to_store=add_to_store):
+    for event in open_chapter_stream(text, book_id, add_to_store=add_to_store):
         if event["type"] == "token":
             parts.append(event["text"])
         elif event["type"] == "meta":
