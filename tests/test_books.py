@@ -32,6 +32,13 @@ def test_create_list_and_reject_blank_title(tmp_path, monkeypatch):
     assert [item["title"] for item in listed.json()] == ["Вторая", "Первая"]
 
 
+def test_unknown_book_has_no_character_list(tmp_path, monkeypatch):
+    monkeypatch.setattr(book_store, "path", tmp_path / "books.json")
+    response = client.get("/api/books/missing-book/characters")
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Книга не найдена"}
+
+
 def test_unknown_book_is_rejected_before_generation(tmp_path, monkeypatch):
     monkeypatch.setattr(book_store, "path", tmp_path / "books.json")
     called = {"stream": False}

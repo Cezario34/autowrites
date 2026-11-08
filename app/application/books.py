@@ -2,6 +2,7 @@ import logging
 from dataclasses import dataclass
 
 from app.infrastructure.books import Book, book_store
+from app.infrastructure.characters import Character, character_store
 from app.infrastructure.vector_store import vector_store
 
 logger = logging.getLogger("app.books")
@@ -31,7 +32,9 @@ class BookDetails:
 
 def _details(book: Book, chunk_count: int | None = None) -> BookDetails:
     if chunk_count is None:
-        chunk_count = vector_store.count_where({"book_id": book.id})
+        stored = vector_store.count_where({"book_id": book.id})
+        people = len(character_store.list_for_book(book.id))
+        chunk_count = max(stored - people, 0)
     return BookDetails(
         id=book.id,
         title=book.title,
@@ -53,6 +56,11 @@ def create_book(title: str) -> BookDetails:
     book = book_store.create(cleaned)
     logger.info("книга создана: %s (%s)", book.title, book.id)
     return _details(book, chunk_count=0)
+
+
+def list_characters(book_id: str) -> list[Character]:
+    require_book(book_id)
+    return character_store.list_for_book(book_id)
 
 
 def require_book(book_id: str) -> Book:
