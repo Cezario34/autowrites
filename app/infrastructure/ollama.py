@@ -22,8 +22,15 @@ class OllamaClient:
         self.llm_model = settings.llm_model
         self.embedding_model = settings.embedding_model
 
-    def _options(self, temperature: float) -> dict[str, float | int]:
-        return {"temperature": temperature, "num_ctx": 16384}
+    def _options(
+        self,
+        temperature: float,
+        num_predict: int | None = None,
+    ) -> dict[str, float | int]:
+        options: dict[str, float | int] = {"temperature": temperature, "num_ctx": 16384}
+        if num_predict is not None:
+            options["num_predict"] = num_predict
+        return options
 
     def generate(
         self,
@@ -31,6 +38,7 @@ class OllamaClient:
         system: str | None = None,
         temperature: float = 0.3,
         response_format: str | None = None,
+        num_predict: int | None = None,
     ) -> str:
         # Ответ собираем из потока: иначе тело из нескольких JSON-строк
         # падает с «Extra data» при разборе одним объектом.
@@ -40,6 +48,7 @@ class OllamaClient:
                 system=system,
                 temperature=temperature,
                 response_format=response_format,
+                num_predict=num_predict,
             )
         )
         text = "".join(parts)
@@ -58,6 +67,7 @@ class OllamaClient:
         system: str | None = None,
         temperature: float = 0.3,
         response_format: str | None = None,
+        num_predict: int | None = None,
     ) -> Iterator[str]:
         """Тот же вызов, что и ollama run: chat и шаблон модели из Modelfile."""
         system_prompt = SYSTEM_PROMPT if system is None else system
@@ -74,7 +84,7 @@ class OllamaClient:
             "model": self.llm_model,
             "messages": messages,
             "stream": True,
-            "options": self._options(temperature),
+            "options": self._options(temperature, num_predict),
         }
         if response_format:
             request["format"] = response_format

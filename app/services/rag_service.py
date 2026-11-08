@@ -70,16 +70,14 @@ def _is_stock_reply(reply: str) -> bool:
     return "логика держится" in folded and len(folded) < 160
 
 
-def _reply_skips_text(reply: str, source: str) -> bool:
-    if _is_stock_reply(reply):
-        return True
-    compact_source = " ".join(source.split())
-    compact_reply = " ".join(reply.split())
-    if not compact_source:
-        return False
-    if len(compact_source) <= 80:
-        return compact_source.casefold() not in compact_reply.casefold()
-    return compact_source[:48].casefold() not in compact_reply.casefold()
+# Короткий разбор, а не переписывание главы: 32B иначе копирует новый отрывок целиком.
+CHECK_MAX_TOKENS = 600
+
+
+def _reply_skips_text(reply: str, _source: str) -> bool:
+    # Повтор только на заготовку. Требовать начало главы нельзя:
+    # модель тогда переписывает новый отрывок целиком.
+    return _is_stock_reply(reply)
 
 
 def _ask_about_text(prompt: str, source: str, task: str, context: str) -> str:
@@ -88,6 +86,7 @@ def _ask_about_text(prompt: str, source: str, task: str, context: str) -> str:
             prompt,
             system=SYSTEM_PROMPT,
             temperature=0.3,
+            num_predict=CHECK_MAX_TOKENS,
         )
     )
     if not _reply_skips_text(reply, source):
@@ -97,7 +96,8 @@ def _ask_about_text(prompt: str, source: str, task: str, context: str) -> str:
         ollama_client.generate_stream(
             _fill(CHECK_RETRY_PROMPT, chapter=source, context=context, task=task),
             system=SYSTEM_PROMPT,
-            temperature=0.7,
+            temperature=0.3,
+            num_predict=CHECK_MAX_TOKENS,
         )
     )
 
