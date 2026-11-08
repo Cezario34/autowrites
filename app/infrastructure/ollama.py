@@ -8,17 +8,12 @@ from app.core.prompts import SYSTEM_PROMPT
 
 logger = logging.getLogger("app.ollama")
 
-# Свой шаблон на один запрос: иначе Modelfile модели подставляет
-# готовую фразу вроде «Противоречий нет» и затирает разбор.
-OWN_TEMPLATE = "{{ if .System }}{{ .System }}\n\n{{ end }}{{ .Prompt }}"
 
-
-def _generate_piece(chunk: object) -> str:
-    if hasattr(chunk, "response"):
-        return chunk.response or ""
-    if isinstance(chunk, dict):
-        return chunk.get("response") or ""
-    return ""
+def _chunk_text(chunk: object) -> str:
+    message = chunk.message if hasattr(chunk, "message") else chunk["message"]
+    if isinstance(message, dict):
+        return message.get("content") or ""
+    return getattr(message, "content", None) or ""
 
 
 class OllamaClient:
@@ -64,26 +59,27 @@ class OllamaClient:
         temperature: float = 0.3,
         response_format: str | None = None,
     ) -> Iterator[str]:
-        system_prompt = system if system is not None else SYSTEM_PROMPT
+        system_prompt = SYSTEM_PROMPT if system is None else system
+        messages: list[dict[str, str]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
         logger.info(
-            "этап: запрос модели, свой шаблон, символов=%s, system=%s",
+            "этап: запрос модели, chat, символов=%s, system=%s",
             len(prompt),
-            (system_prompt or "").splitlines()[0] if system_prompt else "-",
+            system_prompt.splitlines()[0] if system_prompt else "-",
         )
         request: dict = {
             "model": self.llm_model,
-            "prompt": prompt,
-            "system": system_prompt,
-            "template": OWN_TEMPLATE,
-            "raw": False,
+            "messages": messages,
             "stream": True,
             "options": self._options(temperature),
         }
         if response_format:
             request["format"] = response_format
-        stream = self.client.generate(**request)
+        stream = self.client.chat(**request)
         for chunk in stream:
-            text = _generate_piece(chunk)
+            text = _chunk_text(chunk)
             if text:
                 yield text
 
