@@ -216,14 +216,16 @@ def test_second_save_merges_character_json_and_database(monkeypatch, book):
     assert len(cards) == 1
 
 
-def test_save_reports_unparsed_model_output(monkeypatch, book):
+def test_save_keeps_fragments_when_characters_are_unparsed(monkeypatch, caplog, book):
+    saved = {}
+
     def generate(prompt, system=None, temperature=0.3, response_format=None):
         if "персонаж" in prompt.casefold():
             return "Это описание героя, но не JSON."
         return '["Текст главы."]'
 
     def add(**kwargs):
-        raise AssertionError("битый ответ нельзя сохранять")
+        saved["documents"] = kwargs["documents"]
 
     _patch_pipeline(monkeypatch, lambda *args, **kwargs: iter(()))
     monkeypatch.setattr(ollama_client, "generate", generate)
@@ -231,19 +233,54 @@ def test_save_reports_unparsed_model_output(monkeypatch, book):
     monkeypatch.setattr(
         vector_store,
         "upsert",
-        lambda **kwargs: (_ for _ in ()).throw(AssertionError("битый ответ нельзя сохранять")),
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("карточки не из чего писать")),
     )
+    caplog.set_level(logging.ERROR, logger="app")
 
     response = client.post(
         "/api/save-chapter",
         json={"text": "Текст главы.", "book_id": book.id},
     )
     events = _events(response)
-    detail = events[-1]["detail"]
-    assert detail.startswith("Модель вернула не список персонажей")
-    assert "Это описание героя, но не JSON." in detail
+    stored = next(event for event in events if event["type"] == "saved")
+    assert stored["fragments"] == ["Текст главы."]
+    assert stored["characters"] == []
+    assert saved["documents"] == ["Текст главы."]
+    assert events[-1] == {"type": "done"}
+    assert "Это описание героя, но не JSON." in caplog.text
     listed = client.get(f"/api/books/{book.id}/characters")
     assert listed.json() == {"characters": []}
+
+
+def test_save_cuts_the_chapter_when_the_model_only_reviews(monkeypatch, caplog, book):
+    saved = {}
+
+    def generate(prompt, system=None, temperature=0.3, response_format=None):
+        return "Противоречий нет. Логика держится."
+
+    def add(**kwargs):
+        saved["documents"] = kwargs["documents"]
+
+    _patch_pipeline(monkeypatch, lambda *args, **kwargs: iter(()))
+    monkeypatch.setattr(ollama_client, "generate", generate)
+    monkeypatch.setattr(vector_store, "add", add)
+    caplog.set_level(logging.ERROR, logger="app")
+
+    chapter = "Герой вошёл в дом.\n\nОн закрыл дверь."
+    response = client.post(
+        "/api/save-chapter",
+        json={"text": chapter, "book_id": book.id},
+    )
+    events = _events(response)
+    stored = next(event for event in events if event["type"] == "saved")
+    assert stored["split_by"] == "chapter"
+    assert stored["fragments"] == [chapter]
+    assert saved["documents"] == [chapter]
+    assert "Противоречий нет" in stored["note"]
+    messages = [event["message"] for event in events if event["type"] == "stage"]
+    assert any("Режу главу сам" in message for message in messages)
+    assert events[-1] == {"type": "done"}
+    assert "режу главу сам" in caplog.text
 
 
 def test_trailing_slash_still_reaches_save(book):

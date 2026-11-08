@@ -347,12 +347,24 @@ class RAGService:
             system=SPLIT_SYSTEM_PROMPT,
             temperature=0.1,
         )
+        split_by = "model"
+        note = ""
         try:
             fragments = parse_fragments(raw)
-        except SplitError:
-            logger.info("этап: фрагменты не разобраны, начало=%r", raw[:300])
-            raise
-        logger.info("этап: фрагментов=%s", len(fragments))
+        except SplitError as exc:
+            fragments = split_text(text)
+            split_by = "chapter"
+            note = " ".join(raw.split())
+            logger.error(
+                "этап: модель не разрезала текст, режу главу сам, фрагментов=%s\n%s",
+                len(fragments),
+                exc,
+            )
+            shown = note if len(note) <= 160 else note[:159] + "…"
+            yield _stage("split", f"Модель ответила: {shown}. Режу главу сам.")
+        if not fragments:
+            raise SplitError("Глава пустая, сохранять нечего")
+        logger.info("этап: фрагментов=%s, нарезка=%s", len(fragments), split_by)
         yield _stage("characters", "Выписываю персонажей…")
         logger.info("этап: персонажи, модель=%s", settings.llm_model)
         raw_characters = ollama_client.generate(
@@ -363,9 +375,16 @@ class RAGService:
         )
         try:
             found = parse_characters(raw_characters)
-        except CharacterParseError:
-            logger.info("этап: персонажи не разобраны, начало=%r", raw_characters[:300])
-            raise
+        except CharacterParseError as exc:
+            found = []
+            logger.error(
+                "этап: персонажи не разобраны, фрагменты всё равно сохраняю\n%s",
+                exc,
+            )
+            yield _stage(
+                "characters",
+                "Персонажей из ответа не разобрал. Фрагменты сохраняю.",
+            )
         characters = merge_characters(character_store.list_for_book(book_id), found)
         logger.info(
             "этап: персонажей в главе=%s, всего=%s",
@@ -421,6 +440,8 @@ class RAGService:
                 for character in characters
             ],
             "original_length": len(text),
+            "split_by": split_by,
+            "note": note,
         }
         logger.info(
             "этап: сохранено, чанков=%s, персонажей=%s",
