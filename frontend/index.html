@@ -16,10 +16,55 @@
         font: 16px/1.5 "Iowan Old Style", Palatino, Georgia, serif;
       }
 
-      main {
-        max-width: 42rem;
+      .workspace {
+        display: flex;
+        gap: 1.5rem;
+        align-items: flex-start;
+        max-width: 68rem;
         margin: 0 auto;
         padding: 2rem 1.25rem 3rem;
+      }
+
+      main {
+        flex: 1 1 auto;
+        min-width: 0;
+        max-width: 42rem;
+      }
+
+      aside {
+        flex: 0 0 20rem;
+        position: sticky;
+        top: 1rem;
+      }
+
+      aside h2 {
+        margin: 0 0 0.6rem;
+        font-size: 1.05rem;
+        font-weight: 600;
+      }
+
+      #characters {
+        margin: 0;
+        max-height: 70vh;
+        overflow: auto;
+        white-space: pre-wrap;
+        padding: 0.75rem;
+        border: 1px solid #d4cfc4;
+        border-radius: 6px;
+        background: #fff;
+        font: 0.85rem/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+
+      @media (max-width: 860px) {
+        .workspace {
+          flex-direction: column;
+        }
+
+        aside {
+          flex-basis: auto;
+          width: 100%;
+          position: static;
+        }
       }
 
       h1 {
@@ -133,11 +178,13 @@
     </style>
   </head>
   <body>
+    <div class="workspace">
     <main>
       <h1>Автописатель</h1>
       <p class="lead">
         Проверить — сверка с уже сохранённым текстом книги. Сохранить — модель
-        режет главу и складывает фрагменты в базу, без разбора.
+        режет главу и отдельно выписывает персонажей: фрагменты и карточки
+        попадают в базу, JSON персонажей виден справа.
       </p>
       <form id="book-form" class="books">
         <label>
@@ -166,6 +213,11 @@
       <p id="meta"></p>
       <p id="answer"></p>
     </main>
+    <aside>
+      <h2>Персонажи</h2>
+      <pre id="characters">[]</pre>
+    </aside>
+    </div>
     <script>
       const bookForm = document.querySelector("#book-form");
       const bookSelect = document.querySelector("#book");
@@ -179,6 +231,7 @@
       const status = document.querySelector("#status");
       const meta = document.querySelector("#meta");
       const answer = document.querySelector("#answer");
+      const characterPanel = document.querySelector("#characters");
 
       function symbolWord(count) {
         const mod100 = count % 100;
@@ -227,6 +280,26 @@
         } else if (current && books.some((book) => book.id === current)) {
           bookSelect.value = current;
         }
+        await loadCharacters();
+      }
+
+      function showCharacters(characters) {
+        characterPanel.textContent = JSON.stringify(characters || [], null, 2);
+      }
+
+      async function loadCharacters() {
+        if (!bookSelect.value) {
+          showCharacters([]);
+          return;
+        }
+        const response = await fetch(
+          "/api/books/" + encodeURIComponent(bookSelect.value) + "/characters"
+        );
+        if (!response.ok) {
+          throw new Error("Не удалось загрузить персонажей");
+        }
+        const payload = await response.json();
+        showCharacters(payload.characters);
       }
 
       bookForm.addEventListener("submit", async (event) => {
@@ -314,7 +387,10 @@
                   "«" +
                   item.book_title +
                   "» · Сохранено: " +
-                  item.chunks_added;
+                  item.chunks_added +
+                  " · Персонажей: " +
+                  item.characters.length;
+                showCharacters(item.characters);
                 answer.textContent = item.fragments
                   .map((piece, index) => index + 1 + ". " + piece)
                   .join("\n\n");
@@ -339,6 +415,12 @@
           loadBooks(selected).catch(() => {});
         }
       }
+
+      bookSelect.addEventListener("change", () => {
+        loadCharacters().catch((error) => {
+          showStatus(error.message || "Не удалось загрузить персонажей");
+        });
+      });
 
       checkButton.addEventListener("click", () => runChapter("/api/check-chapter"));
       saveButton.addEventListener("click", () => runChapter("/api/save-chapter"));

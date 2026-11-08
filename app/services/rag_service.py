@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import uuid
@@ -6,9 +7,16 @@ from dataclasses import dataclass
 
 from app.core.config import settings
 from app.core.prompts import (
+    CHARACTER_CHAPTER_PROMPT,
+    CHARACTER_SYSTEM_PROMPT,
     CHECK_CHAPTER_PROMPT,
     SPLIT_CHAPTER_PROMPT,
     SPLIT_SYSTEM_PROMPT,
+)
+from app.infrastructure.characters import (
+    Character,
+    character_store,
+    merge_characters,
 )
 from app.infrastructure.ollama import ollama_client
 from app.infrastructure.vector_store import vector_store
@@ -29,19 +37,27 @@ class SplitError(Exception):
     """Модель не вернула пригодный список фрагментов."""
 
 
+class CharacterParseError(Exception):
+    """Модель не вернула пригодный список персонажей."""
+
+
 def _stage(stage: str, message: str) -> dict[str, str]:
     return {"type": "stage", "stage": stage, "message": message}
 
 
-def parse_fragments(raw: str) -> list[str]:
+def _model_payload(raw: str):
     text = raw.strip()
     if text.startswith("```"):
         lines = text.splitlines()[1:]
         if lines and lines[-1].strip().startswith("```"):
             lines = lines[:-1]
         text = "\n".join(lines).strip()
+    return json.loads(text)
+
+
+def parse_fragments(raw: str) -> list[str]:
     try:
-        payload = json.loads(text)
+        payload = _model_payload(raw)
     except json.JSONDecodeError as exc:
         raise SplitError("Модель вернула не список фрагментов") from exc
     if isinstance(payload, dict):
@@ -64,6 +80,40 @@ def parse_fragments(raw: str) -> list[str]:
     return fragments
 
 
+def parse_characters(raw: str) -> list[Character]:
+    try:
+        payload = _model_payload(raw)
+    except json.JSONDecodeError as exc:
+        raise CharacterParseError("Модель вернула не список персонажей") from exc
+    if isinstance(payload, dict):
+        payload = payload.get("characters")
+    if not isinstance(payload, list):
+        raise CharacterParseError("Модель вернула не список персонажей")
+
+    characters: list[Character] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        description = str(item.get("description") or "").strip()
+        if name:
+            characters.append(Character(name=name, description=description))
+    if payload and not characters:
+        raise CharacterParseError("Модель не вернула персонажей")
+    return characters
+
+
+def character_document(character: Character) -> str:
+    if character.description:
+        return f"Персонаж: {character.name}\n{character.description}"
+    return f"Персонаж: {character.name}"
+
+
+def character_vector_id(book_id: str, name: str) -> str:
+    digest = hashlib.sha1(name.casefold().strip().encode()).hexdigest()[:12]
+    return f"{book_id}-character-{digest}"
+
+
 class RAGService:
     def _save_chunks(
         self,
@@ -78,7 +128,12 @@ class RAGService:
         chapter_id = chapter_id or str(uuid.uuid4())
         ids = [f"{book_id}-{chapter_id}-{i}" for i in range(len(chunks))]
         metadatas = [
-            {"book_id": book_id, "chapter_id": chapter_id, "chunk_index": i}
+            {
+                "book_id": book_id,
+                "chapter_id": chapter_id,
+                "chunk_index": i,
+                "kind": "fragment",
+            }
             for i in range(len(chunks))
         ]
         vector_store.add(
@@ -173,7 +228,7 @@ class RAGService:
         book_id: str,
         book_title: str,
     ) -> Iterator[dict]:
-        """Просит модель разрезать главу и сохраняет фрагменты без разбора."""
+        """Режет главу на фрагменты и отдельно сохраняет карточки персонажей."""
         logger.info(
             "этап: сохранение, книга=%s (%s), символов=%s",
             book_title,
@@ -194,15 +249,57 @@ class RAGService:
         )
         fragments = parse_fragments(raw)
         logger.info("этап: фрагментов=%s", len(fragments))
+        yield _stage("characters", "Выписываю персонажей…")
+        logger.info("этап: персонажи, модель=%s", settings.llm_model)
+        raw_characters = ollama_client.generate(
+            CHARACTER_CHAPTER_PROMPT.format(book=book_title, chapter=text),
+            system=CHARACTER_SYSTEM_PROMPT,
+            temperature=0.1,
+        )
+        found = parse_characters(raw_characters)
+        characters = merge_characters(character_store.list_for_book(book_id), found)
+        logger.info(
+            "этап: персонажей в главе=%s, всего=%s",
+            len(found),
+            len(characters),
+        )
         yield _stage("embed", "Считаю эмбеддинги…")
         logger.info(
-            "этап: эмбеддинги, чанков=%s, модель=%s",
+            "этап: эмбеддинги, чанков=%s, персонажей=%s, модель=%s",
             len(fragments),
+            len(found),
             settings.embedding_model,
         )
         embeddings = embedding_service.embed_batch(fragments)
         yield _stage("store", "Сохраняю фрагменты…")
         chunks_added = self._save_chunks(fragments, embeddings, book_id)
+        if found:
+            stored_people = [
+                character
+                for character in characters
+                if character.name.casefold().strip()
+                in {item.name.casefold().strip() for item in found}
+            ]
+            people_embeddings = embedding_service.embed_batch(
+                [character_document(character) for character in stored_people]
+            )
+            vector_store.upsert(
+                ids=[
+                    character_vector_id(book_id, character.name)
+                    for character in stored_people
+                ],
+                embeddings=people_embeddings,
+                documents=[character_document(character) for character in stored_people],
+                metadatas=[
+                    {
+                        "book_id": book_id,
+                        "kind": "character",
+                        "name": character.name,
+                    }
+                    for character in stored_people
+                ],
+            )
+        character_store.replace(book_id, characters)
         logger.info("этап: запись в базу, чанков=%s", chunks_added)
         yield {
             "type": "saved",
@@ -210,9 +307,17 @@ class RAGService:
             "book_title": book_title,
             "fragments": fragments,
             "chunks_added": chunks_added,
+            "characters": [
+                {"name": character.name, "description": character.description}
+                for character in characters
+            ],
             "original_length": len(text),
         }
-        logger.info("этап: сохранено, чанков=%s", chunks_added)
+        logger.info(
+            "этап: сохранено, чанков=%s, персонажей=%s",
+            chunks_added,
+            len(characters),
+        )
         yield {"type": "done"}
 
     def check_chapter(self, text: str, book_id: str, book_title: str) -> RAGResult:

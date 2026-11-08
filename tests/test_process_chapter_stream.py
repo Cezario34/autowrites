@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.application.books import create_book
 from app.infrastructure.books import book_store
+from app.infrastructure.characters import character_store
 from app.infrastructure.ollama import ollama_client
 from app.infrastructure.vector_store import vector_store
 from app.main import app
@@ -17,6 +18,7 @@ client = TestClient(app)
 @pytest.fixture
 def book(tmp_path, monkeypatch):
     monkeypatch.setattr(book_store, "path", tmp_path / "books.json")
+    monkeypatch.setattr(character_store, "path", tmp_path / "characters.json")
     return create_book("Роман")
 
 
@@ -28,6 +30,7 @@ def _patch_pipeline(monkeypatch, stream):
     )
     monkeypatch.setattr(embedding_service, "embed", lambda text: [0.1, 0.2])
     monkeypatch.setattr(vector_store, "add", lambda **kwargs: None)
+    monkeypatch.setattr(vector_store, "upsert", lambda **kwargs: None)
     monkeypatch.setattr(
         vector_store,
         "query",
@@ -93,19 +96,30 @@ def test_check_uses_existing_rag_and_does_not_save(monkeypatch, caplog, book):
     assert "этап: запись в базу" not in caplog.text
 
 
-def test_save_stores_model_fragments_without_analysis(monkeypatch, caplog, book):
-    saved = {}
+def _save_reply(prompt, system=None, temperature=0.3, people=None):
+    if "персонаж" in prompt.casefold():
+        body = people
+        if body is None:
+            body = [{"name": "Герой", "description": "Вошёл в дом и закрыл дверь."}]
+        return json.dumps(body, ensure_ascii=False)
+    assert "Не анализируй" in prompt
+    return '["Герой вошёл в дом.", "Он закрыл дверь."]'
+
+
+def test_save_stores_fragments_and_character_cards(monkeypatch, caplog, book):
+    saved = {"adds": [], "upserts": [], "systems": []}
 
     def add(**kwargs):
-        saved["documents"] = kwargs["documents"]
-        saved["metadatas"] = kwargs["metadatas"]
+        saved["adds"].append(kwargs)
+
+    def upsert(**kwargs):
+        saved["upserts"].append(kwargs)
 
     def generate(prompt, system=None, temperature=0.3):
-        saved["system"] = system
-        saved["temperature"] = temperature
+        saved["systems"].append(system)
+        assert temperature == 0.1
         assert "Герой вошёл" in prompt
-        assert "Не анализируй" in prompt
-        return '["Герой вошёл в дом.", "Он закрыл дверь."]'
+        return _save_reply(prompt, system, temperature)
 
     def stream(*args, **kwargs):
         raise AssertionError("при сохранении разбор не нужен")
@@ -116,6 +130,7 @@ def test_save_stores_model_fragments_without_analysis(monkeypatch, caplog, book)
     _patch_pipeline(monkeypatch, stream)
     monkeypatch.setattr(ollama_client, "generate", generate)
     monkeypatch.setattr(vector_store, "add", add)
+    monkeypatch.setattr(vector_store, "upsert", upsert)
     monkeypatch.setattr(vector_store, "query", query)
     caplog.set_level(logging.INFO, logger="app")
 
@@ -128,6 +143,7 @@ def test_save_stores_model_fragments_without_analysis(monkeypatch, caplog, book)
     assert messages == [
         "Идёт сохранение…",
         "Модель разбивает текст…",
+        "Выписываю персонажей…",
         "Считаю эмбеддинги…",
         "Сохраняю фрагменты…",
     ]
@@ -135,19 +151,72 @@ def test_save_stores_model_fragments_without_analysis(monkeypatch, caplog, book)
     stored = next(event for event in events if event["type"] == "saved")
     assert stored["fragments"] == ["Герой вошёл в дом.", "Он закрыл дверь."]
     assert stored["chunks_added"] == 2
-    assert stored["book_title"] == "Роман"
-    assert saved["documents"] == stored["fragments"]
-    assert [item["book_id"] for item in saved["metadatas"]] == [book.id, book.id]
-    assert "JSON-массивом" in saved["system"]
-    assert saved["temperature"] == 0.1
+    assert stored["characters"] == [
+        {"name": "Герой", "description": "Вошёл в дом и закрыл дверь."}
+    ]
+    assert saved["adds"][0]["documents"] == stored["fragments"]
+    assert [item["kind"] for item in saved["adds"][0]["metadatas"]] == [
+        "fragment",
+        "fragment",
+    ]
+    card = saved["upserts"][0]
+    assert card["documents"] == ["Персонаж: Герой\nВошёл в дом и закрыл дверь."]
+    assert card["metadatas"] == [
+        {"book_id": book.id, "kind": "character", "name": "Герой"}
+    ]
+    assert "JSON-массивом строк" in saved["systems"][0]
+    assert "JSON-массивом объектов" in saved["systems"][1]
     assert events[-1] == {"type": "done"}
-    assert "этап: разбиение" in caplog.text
-    assert "этап: запись в базу" in caplog.text
+    listed = client.get(f"/api/books/{book.id}/characters")
+    assert listed.status_code == 200
+    assert listed.json() == {"characters": stored["characters"]}
+    assert "этап: персонажи" in caplog.text
+
+
+def test_second_save_merges_character_json_and_database(monkeypatch, book):
+    calls = {"people": []}
+
+    def generate(prompt, system=None, temperature=0.3):
+        people = calls["people"] or None
+        return _save_reply(prompt, people=people)
+
+    _patch_pipeline(monkeypatch, lambda *args, **kwargs: iter(()))
+    monkeypatch.setattr(ollama_client, "generate", generate)
+    cards = {}
+
+    def upsert(**kwargs):
+        for item_id, document in zip(kwargs["ids"], kwargs["documents"]):
+            cards[item_id] = document
+
+    monkeypatch.setattr(vector_store, "upsert", upsert)
+
+    client.post(
+        "/api/save-chapter",
+        json={"text": "Герой вошёл в дом.", "book_id": book.id},
+    )
+    calls["people"] = [{"name": "герой", "description": "Ждёт утра."}]
+    response = client.post(
+        "/api/save-chapter",
+        json={"text": "Герой вошёл в дом.", "book_id": book.id},
+    )
+    stored = next(event for event in _events(response) if event["type"] == "saved")
+    assert stored["characters"] == [
+        {
+            "name": "Герой",
+            "description": "Вошёл в дом и закрыл дверь. Ждёт утра.",
+        }
+    ]
+    assert list(cards.values()) == [
+        "Персонаж: Герой\nВошёл в дом и закрыл дверь. Ждёт утра."
+    ]
+    assert len(cards) == 1
 
 
 def test_save_reports_unparsed_model_output(monkeypatch, book):
     def generate(prompt, system=None, temperature=0.3):
-        return "Здесь есть противоречие, но это не JSON."
+        if "персонаж" in prompt.casefold():
+            return "Это описание героя, но не JSON."
+        return '["Текст главы."]'
 
     def add(**kwargs):
         raise AssertionError("битый ответ нельзя сохранять")
@@ -155,13 +224,20 @@ def test_save_reports_unparsed_model_output(monkeypatch, book):
     _patch_pipeline(monkeypatch, lambda *args, **kwargs: iter(()))
     monkeypatch.setattr(ollama_client, "generate", generate)
     monkeypatch.setattr(vector_store, "add", add)
+    monkeypatch.setattr(
+        vector_store,
+        "upsert",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("битый ответ нельзя сохранять")),
+    )
 
     response = client.post(
         "/api/save-chapter",
         json={"text": "Текст главы.", "book_id": book.id},
     )
     events = _events(response)
-    assert events[-1] == {"type": "error", "detail": "Модель вернула не список фрагментов"}
+    assert events[-1] == {"type": "error", "detail": "Модель вернула не список персонажей"}
+    listed = client.get(f"/api/books/{book.id}/characters")
+    assert listed.json() == {"characters": []}
 
 
 def test_empty_chapter_stays_bad_request(book):
