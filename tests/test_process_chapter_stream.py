@@ -91,14 +91,14 @@ def test_check_uses_existing_rag_and_does_not_save(monkeypatch, caplog, book):
     assert "ранее" in rag_prompt[0]
     assert "Герой" in rag_prompt[0]
     assert "Роман" in rag_prompt[0]
-    assert "не переписывай" in rag_prompt[0]
+    assert "не цитируй" in rag_prompt[0]
     assert "ранее" not in logic_prompt[0]
     assert "Герой" in logic_prompt[0]
     assert "внутреннюю логику" in logic_prompt[0]
-    assert "не переписывай" in logic_prompt[0]
+    assert "не цитируй" in logic_prompt[0]
     assert rag_prompt[2] == logic_prompt[2] == 0.3
     assert rag_prompt[3] == logic_prompt[3] == 600
-    assert rag_prompt[1].startswith("Ты — помощник писателя.")
+    assert rag_prompt[1].startswith("Ты проверяешь присланный отрывок")
     meta = next(event for event in events if event["type"] == "meta")
     assert meta["book_id"] == book.id
     assert meta["book_title"] == "Роман"
@@ -441,7 +441,7 @@ def test_long_excerpt_is_reviewed_once_without_rewriting_it(monkeypatch, book):
     def stream(prompt, system=None, temperature=0.3, response_format=None, num_predict=None):
         calls["n"] += 1
         assert num_predict == 600
-        assert "не переписывай" in prompt
+        assert "не цитируй" in prompt
         yield "Герой смотрит в окно. Это другая сцена, не падение с башни."
 
     _patch_pipeline(monkeypatch, stream)
