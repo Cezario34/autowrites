@@ -31,8 +31,10 @@ def _plain_prompt(system: str, prompt: str) -> str:
     return prompt
 
 
-# Шаблон без заготовки «Противоречий нет»: в него попадают и задание, и присланный текст.
-OPEN_TEMPLATE = "{{ if .System }}{{ .System }}\n\n{{ end }}{{ .Prompt }}"
+# Шаблон чата: в него входят все сообщения, без заготовки «Противоречий нет».
+OPEN_TEMPLATE = """{{- range .Messages }}{{ .Role }}: {{ .Content }}
+{{ end }}assistant:
+"""
 
 
 class OllamaClient:
@@ -41,6 +43,7 @@ class OllamaClient:
         self.llm_model = settings.llm_model
         self.embedding_model = settings.embedding_model
         self._reading_model_name: str | None = None
+        self.template_note = ""
 
     def _options(self, temperature: float) -> dict[str, float | int]:
         return {"temperature": temperature, "num_ctx": 16384}
@@ -103,14 +106,7 @@ class OllamaClient:
     def _reading_model(self) -> str:
         if self._reading_model_name:
             return self._reading_model_name
-        plain = f"{self.llm_model}-read"
-        try:
-            self.client.show(plain)
-            self._reading_model_name = plain
-            logger.info("этап: разбор идёт моделью %s", plain)
-            return plain
-        except Exception:
-            pass
+        plain = f"{self.llm_model}-open"
         try:
             shown = self.client.show(self.llm_model)
             template = getattr(shown, "template", None) or ""
@@ -119,14 +115,16 @@ class OllamaClient:
                 model=plain,
                 from_=self.llm_model,
                 template=OPEN_TEMPLATE,
-                system="Отвечай только по присланному тексту. Заготовленные фразы не используй.",
+                system="Отвечай только по присланному тексту. Фразу «Противоречий нет» не используй.",
                 stream=False,
             )
             self._reading_model_name = plain
+            self.template_note = ""
             logger.info("этап: для разбора создана %s, старый шаблон не используется", plain)
         except Exception as exc:
             logger.error("этап: шаблон модели не заменён: %s", exc)
             self._reading_model_name = self.llm_model
+            self.template_note = "Шаблон модели не заменён, поэтому она может отвечать заготовкой."
         return self._reading_model_name
 
     def _raw_stream(
