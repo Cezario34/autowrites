@@ -118,7 +118,10 @@ def test_save_stores_fragments_and_character_cards(monkeypatch, caplog, book):
     def generate(prompt, system=None, temperature=0.3, response_format=None):
         saved["systems"].append(system)
         assert temperature == 0.1
-        assert response_format == "json"
+        if "персонаж" in prompt.casefold():
+            assert response_format == "json"
+        else:
+            assert response_format is None
         assert "Герой вошёл" in prompt
         return _save_reply(prompt, system, temperature)
 
@@ -165,7 +168,7 @@ def test_save_stores_fragments_and_character_cards(monkeypatch, caplog, book):
     assert card["metadatas"] == [
         {"book_id": book.id, "kind": "character", "name": "Герой"}
     ]
-    assert "JSON-массивом строк" in saved["systems"][0]
+    assert "---" in saved["systems"][0]
     assert "JSON-массивом объектов" in saved["systems"][1]
     assert events[-1] == {"type": "done"}
     listed = client.get(f"/api/books/{book.id}/characters")

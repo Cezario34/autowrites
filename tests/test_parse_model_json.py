@@ -18,6 +18,16 @@ def test_parse_fragments_from_object_after_prose():
     assert parse_fragments(raw) == ["Первый кусок.", "Второй кусок."]
 
 
+def test_parse_fragments_split_by_marker():
+    raw = "Герой вошёл в дом.\n---\nОн закрыл дверь."
+    assert parse_fragments(raw) == ["Герой вошёл в дом.", "Он закрыл дверь."]
+
+
+def test_parse_fragments_from_numbered_lines():
+    raw = "1. Герой вошёл в дом.\n2. Он закрыл дверь."
+    assert parse_fragments(raw) == ["Герой вошёл в дом.", "Он закрыл дверь."]
+
+
 def test_parse_fragments_from_array_inside_text():
     assert parse_fragments('Вот фрагменты:\n["Один.", "Два."]') == ["Один.", "Два."]
 

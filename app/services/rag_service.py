@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import re
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -88,17 +89,12 @@ def _payload_list(payload, keys: tuple[str, ...]):
     return None
 
 
-def parse_fragments(raw: str) -> list[str]:
-    try:
-        payload = _model_payload(raw)
-    except json.JSONDecodeError as exc:
-        raise SplitError("Модель вернула не список фрагментов") from exc
-    payload = _payload_list(payload, ("fragments", "chunks", "items", "result"))
-    if not isinstance(payload, list):
-        raise SplitError("Модель вернула не список фрагментов")
-
+def _strings_from_payload(payload) -> list[str] | None:
+    items = _payload_list(payload, ("fragments", "chunks", "items", "result"))
+    if not isinstance(items, list):
+        return None
     fragments: list[str] = []
-    for item in payload:
+    for item in items:
         if isinstance(item, str):
             piece = item.strip()
         elif isinstance(item, dict):
@@ -110,6 +106,56 @@ def parse_fragments(raw: str) -> list[str]:
     if not fragments:
         raise SplitError("Модель не вернула фрагменты")
     return fragments
+
+
+def _fragments_from_whole_json(text: str) -> list[str] | None:
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return _strings_from_payload(payload)
+
+
+def _fragments_marked(text: str) -> list[str]:
+    parts = re.split(r"(?m)^[ \t]*---[ \t]*$", text)
+    return [part.strip() for part in parts if part.strip()]
+
+
+def _fragments_from_list_markup(text: str) -> list[str]:
+    pieces: list[str] = []
+    current: list[str] = []
+    marker = re.compile(r"^\s*(?:\d+[\.\)]|[-*•])\s+\S")
+    for line in text.splitlines():
+        if marker.match(line):
+            if current:
+                pieces.append("\n".join(current).strip())
+            current = [re.sub(r"^\s*(?:\d+[\.\)]|[-*•])\s+", "", line)]
+        elif current:
+            current.append(line)
+    if current:
+        pieces.append("\n".join(current).strip())
+    return [piece for piece in pieces if piece]
+
+
+def parse_fragments(raw: str) -> list[str]:
+    """Берёт фрагменты, на которые модель разрезала обычный текст."""
+    text = _strip_fences(raw).strip()
+    whole = _fragments_from_whole_json(text)
+    if whole is not None:
+        return whole
+    marked = _fragments_marked(text)
+    if len(marked) >= 2:
+        return marked
+    try:
+        found = _strings_from_payload(_model_payload(text))
+    except json.JSONDecodeError:
+        found = None
+    if found:
+        return found
+    listed = _fragments_from_list_markup(text)
+    if len(listed) >= 2:
+        return listed
+    raise SplitError("Модель вернула не список фрагментов")
 
 
 def parse_characters(raw: str) -> list[Character]:
@@ -277,7 +323,6 @@ class RAGService:
             ),
             system=SPLIT_SYSTEM_PROMPT,
             temperature=0.1,
-            response_format="json",
         )
         try:
             fragments = parse_fragments(raw)
