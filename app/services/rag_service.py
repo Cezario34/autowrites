@@ -346,6 +346,7 @@ class RAGService:
             "type": "token",
             "text": f"По уже сохранённому тексту (фрагментов из базы: {len(context_chunks)})\n\n",
         }
+        rag_parts: list[str] = []
         for piece in ollama_client.generate_stream(
             CHECK_AGAINST_RAG_PROMPT.format(
                 book=book_title,
@@ -355,7 +356,9 @@ class RAGService:
             system=CHECK_SYSTEM_PROMPT,
             temperature=0.2,
         ):
+            rag_parts.append(piece)
             yield {"type": "token", "text": piece}
+        logger.info("этап: сверка, ответ=\n%s", "".join(rag_parts))
 
         yield _stage("logic", "Проверяю логику нового отрывка…")
         logger.info("этап: логика нового отрывка, модель=%s", settings.llm_model)
@@ -369,7 +372,7 @@ class RAGService:
             parts.append(piece)
             yield {"type": "token", "text": piece}
 
-        logger.info("этап: готово, символов логики=%s", sum(len(part) for part in parts))
+        logger.info("этап: логика, ответ=\n%s", "".join(parts))
         yield {"type": "done"}
 
     def iter_save_chapter(
