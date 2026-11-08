@@ -135,6 +135,27 @@ def test_model_html_error_does_not_reach_the_page(monkeypatch, book):
     assert "<!doctype" not in detail.casefold()
 
 
+def test_check_says_when_the_model_ignores_the_excerpt(monkeypatch, book):
+    def stream(prompt, system=None, temperature=0.3, response_format=None):
+        assert "Герой вошёл в дом." in prompt
+        yield "Противоречий нет. Логика держится."
+
+    _patch_pipeline(monkeypatch, stream)
+    monkeypatch.setattr(
+        vector_store,
+        "query",
+        lambda *args, **kwargs: {"documents": [["ранее"]]},
+    )
+
+    response = client.post(
+        "/api/check-chapter",
+        json={"text": "Герой вошёл в дом.", "book_id": book.id},
+    )
+    answer = "".join(event["text"] for event in _events(response) if event["type"] == "token")
+    assert answer.count("Модель не разобрала присланный отрывок") == 2
+    assert "Герой вошёл в дом." in answer
+
+
 def test_check_searches_the_whole_excerpt_and_skips_character_cards(monkeypatch, book):
     calls = []
 

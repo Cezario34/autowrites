@@ -1,34 +1,64 @@
+from ollama import ResponseError
+
 from app.infrastructure.ollama import ollama_client
 
 
-def test_generate_uses_chat_and_joins_the_reply(monkeypatch):
-    class Message:
-        def __init__(self, content: str) -> None:
-            self.content = content
+class _GenerateChunk:
+    def __init__(self, text: str) -> None:
+        self.response = text
 
-    class Chunk:
-        def __init__(self, content: str) -> None:
-            self.message = Message(content)
 
+class _Message:
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+
+class _ChatChunk:
+    def __init__(self, content: str) -> None:
+        self.message = _Message(content)
+
+
+def test_generate_sends_the_text_outside_the_model_template(monkeypatch):
     seen = {}
 
-    def chat(**kwargs):
-        seen.update(kwargs)
-        yield Chunk("Цитата из ")
-        yield Chunk("отрывка.")
-
     def generate(**kwargs):
-        raise AssertionError("адрес /api/generate у этого сервера отвечает 404")
+        seen.update(kwargs)
+        yield _GenerateChunk("Мыло щипало ")
+        yield _GenerateChunk("кожу, это и есть разбор.")
 
-    monkeypatch.setattr(ollama_client.client, "chat", chat)
+    def chat(**kwargs):
+        raise AssertionError("сырой запрос не должен падать в chat")
+
     monkeypatch.setattr(ollama_client.client, "generate", generate)
+    monkeypatch.setattr(ollama_client.client, "chat", chat)
 
     assert ollama_client.generate(
         "Мыло щипало кожу.",
         system="Разбери цитатами.",
         temperature=0.2,
-    ) == "Цитата из отрывка."
-    assert seen["stream"] is True
-    assert seen["messages"][0] == {"role": "system", "content": "Разбери цитатами."}
-    assert seen["messages"][1] == {"role": "user", "content": "Мыло щипало кожу."}
+    ) == "Мыло щипало кожу, это и есть разбор."
+    assert seen["raw"] is True
+    assert seen["think"] is False
+    assert "Мыло щипало кожу." in seen["prompt"]
+    assert seen["prompt"].startswith("Разбери цитатами.")
     assert seen["options"]["temperature"] == 0.2
+
+
+def test_generate_falls_back_to_chat_when_generate_route_is_missing(monkeypatch):
+    seen = {}
+
+    def generate(**kwargs):
+        raise ResponseError("Nothing matches the given URI.", 404)
+
+    def chat(**kwargs):
+        seen.update(kwargs)
+        yield _ChatChunk("Разбор из chat.")
+
+    monkeypatch.setattr(ollama_client.client, "generate", generate)
+    monkeypatch.setattr(ollama_client.client, "chat", chat)
+
+    assert ollama_client.generate("Мыло щипало кожу.", system="Разбери.", temperature=0.2) == (
+        "Разбор из chat."
+    )
+    assert seen["think"] is False
+    assert seen["messages"][1]["content"] == "Мыло щипало кожу."
