@@ -2,6 +2,7 @@ import logging
 from collections.abc import Iterator
 
 import ollama
+from ollama import ResponseError
 
 from app.core.config import settings
 from app.core.prompts import SYSTEM_PROMPT
@@ -14,6 +15,20 @@ def _chunk_text(chunk: object) -> str:
     if isinstance(message, dict):
         return message.get("content") or ""
     return getattr(message, "content", None) or ""
+
+
+def _response_text(chunk: object) -> str:
+    if hasattr(chunk, "response"):
+        return chunk.response or ""
+    if isinstance(chunk, dict):
+        return chunk.get("response") or ""
+    return ""
+
+
+def _plain_prompt(system: str, prompt: str) -> str:
+    if system:
+        return f"{system}\n\n{prompt}"
+    return prompt
 
 
 class OllamaClient:
@@ -60,19 +75,63 @@ class OllamaClient:
         response_format: str | None = None,
     ) -> Iterator[str]:
         system_prompt = SYSTEM_PROMPT if system is None else system
+        plain = _plain_prompt(system_prompt, prompt)
+        logger.info(
+            "этап: запрос модели, символов=%s, начало задания=%s",
+            len(prompt),
+            " ".join(prompt.split())[:120],
+        )
+        try:
+            yield from self._raw_stream(plain, temperature, response_format)
+            return
+        except ResponseError as exc:
+            if exc.status_code != 404:
+                raise
+            logger.error(
+                "этап: /api/generate нет, остаюсь на /api/chat. Шаблон модели может выкинуть текст."
+            )
+        yield from self._chat_stream(prompt, system_prompt, temperature, response_format)
+
+    def _raw_stream(
+        self,
+        prompt: str,
+        temperature: float,
+        response_format: str | None,
+    ) -> Iterator[str]:
+        # raw обходит шаблон Modelfile: иначе модель не видит присланный текст
+        # и отвечает заготовкой вроде «Противоречий нет».
+        request: dict = {
+            "model": self.llm_model,
+            "prompt": prompt,
+            "raw": True,
+            "stream": True,
+            "think": False,
+            "options": self._options(temperature),
+        }
+        if response_format:
+            request["format"] = response_format
+        stream = self.client.generate(**request)
+        for chunk in stream:
+            text = _response_text(chunk)
+            if text:
+                yield text
+
+    def _chat_stream(
+        self,
+        prompt: str,
+        system_prompt: str,
+        temperature: float,
+        response_format: str | None,
+    ) -> Iterator[str]:
         messages: list[dict[str, str]] = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
-        logger.info(
-            "этап: запрос модели, chat, символов=%s, system=%s",
-            len(prompt),
-            system_prompt.splitlines()[0] if system_prompt else "-",
-        )
         request: dict = {
             "model": self.llm_model,
             "messages": messages,
             "stream": True,
+            "think": False,
             "options": self._options(temperature),
         }
         if response_format:

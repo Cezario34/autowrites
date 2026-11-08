@@ -48,6 +48,25 @@ def _stage(stage: str, message: str) -> dict[str, str]:
     return {"type": "stage", "stage": stage, "message": message}
 
 
+def _fill(template: str, **values: object) -> str:
+    """Подставляет поля, не трогая фигурные скобки внутри самого текста."""
+    rendered = template
+    for key, value in values.items():
+        rendered = rendered.replace("{" + key + "}", str(value))
+    return rendered
+
+
+def _opening(text: str, limit: int = 48) -> str:
+    return " ".join(text.split())[:limit]
+
+
+def _reply_skips_text(reply: str, source: str) -> bool:
+    opening = _opening(source)
+    if len(opening) < 12:
+        return False
+    return opening.casefold() not in " ".join(reply.split()).casefold()
+
+
 def _text_windows(text: str, size: int = 2000) -> list[str]:
     """Начало, середина и конец длинного отрывка, чтобы сверка не смотрела только в начало."""
     stripped = text.strip()
@@ -348,7 +367,8 @@ class RAGService:
         }
         rag_parts: list[str] = []
         for piece in ollama_client.generate_stream(
-            CHECK_AGAINST_RAG_PROMPT.format(
+            _fill(
+                CHECK_AGAINST_RAG_PROMPT,
                 book=book_title,
                 context=context,
                 chapter=text,
@@ -358,21 +378,37 @@ class RAGService:
         ):
             rag_parts.append(piece)
             yield {"type": "token", "text": piece}
-        logger.info("этап: сверка, ответ=\n%s", "".join(rag_parts))
+        rag_reply = "".join(rag_parts)
+        logger.info("этап: сверка, ответ=\n%s", rag_reply)
+        if _reply_skips_text(rag_reply, text):
+            note = (
+                "\n\nМодель не разобрала присланный отрывок: в ответе нет его начала. "
+                f"В запрос оно входило: «{_opening(text, 80)}»."
+            )
+            logger.error("этап: сверка пропустила текст, начало=%s", _opening(text, 80))
+            yield {"type": "token", "text": note}
 
         yield _stage("logic", "Проверяю логику нового отрывка…")
         logger.info("этап: логика нового отрывка, модель=%s", settings.llm_model)
         yield {"type": "token", "text": "\n\nЛогика нового отрывка\n\n"}
         parts: list[str] = []
         for piece in ollama_client.generate_stream(
-            CHECK_LOGIC_PROMPT.format(book=book_title, chapter=text),
+            _fill(CHECK_LOGIC_PROMPT, book=book_title, chapter=text),
             system=CHECK_SYSTEM_PROMPT,
             temperature=0.2,
         ):
             parts.append(piece)
             yield {"type": "token", "text": piece}
 
-        logger.info("этап: логика, ответ=\n%s", "".join(parts))
+        logic_reply = "".join(parts)
+        logger.info("этап: логика, ответ=\n%s", logic_reply)
+        if _reply_skips_text(logic_reply, text):
+            note = (
+                "\n\nМодель не разобрала присланный отрывок: в ответе нет его начала. "
+                f"В запрос оно входило: «{_opening(text, 80)}»."
+            )
+            logger.error("этап: логика пропустила текст, начало=%s", _opening(text, 80))
+            yield {"type": "token", "text": note}
         yield {"type": "done"}
 
     def iter_save_chapter(
@@ -392,7 +428,8 @@ class RAGService:
         yield _stage("split", "Модель разбивает текст…")
         logger.info("этап: разбиение, модель=%s", settings.llm_model)
         raw = ollama_client.generate(
-            SPLIT_CHAPTER_PROMPT.format(
+            _fill(
+                SPLIT_CHAPTER_PROMPT,
                 book=book_title,
                 chapter=text,
                 chunk_size=settings.chunk_size,
@@ -421,7 +458,7 @@ class RAGService:
         yield _stage("characters", "Выписываю персонажей…")
         logger.info("этап: персонажи, модель=%s", settings.llm_model)
         raw_characters = ollama_client.generate(
-            CHARACTER_CHAPTER_PROMPT.format(book=book_title, chapter=text),
+            _fill(CHARACTER_CHAPTER_PROMPT, book=book_title, chapter=text),
             system=CHARACTER_SYSTEM_PROMPT,
             temperature=0.1,
             response_format="json",
