@@ -37,12 +37,11 @@ class OllamaClient:
         system: str | None = None,
         temperature: float = 0.3,
     ) -> str:
-        response = self.client.chat(
-            model=self.llm_model,
-            messages=self._messages(prompt, system),
-            options=self._options(temperature),
+        # Ответ собираем из потока: иначе тело из нескольких JSON-строк
+        # падает с «Extra data» при разборе одним объектом.
+        return "".join(
+            self.generate_stream(prompt, system=system, temperature=temperature)
         )
-        return response["message"]["content"]
 
     def generate_stream(
         self,
