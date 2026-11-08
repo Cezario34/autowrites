@@ -12,6 +12,7 @@ from app.core.prompts import (
     CHARACTER_SYSTEM_PROMPT,
     CHECK_AGAINST_RAG_PROMPT,
     CHECK_LOGIC_PROMPT,
+    CHECK_RETRY_PROMPT,
     CHECK_SYSTEM_PROMPT,
     SPLIT_CHAPTER_PROMPT,
     SPLIT_SYSTEM_PROMPT,
@@ -81,12 +82,45 @@ def _reply_skips_text(reply: str, source: str) -> bool:
     return compact_source[:48].casefold() not in compact_reply.casefold()
 
 
+def _check_system(text: str) -> str:
+    return CHECK_SYSTEM_PROMPT + "\n\nПрисланный текст, его нужно разобрать:\n" + text
+
+
+def _ask_about_text(prompt: str, source: str, task: str, context: str) -> str:
+    reply = "".join(
+        ollama_client.generate_stream(
+            prompt,
+            system=_check_system(source),
+            temperature=0.2,
+        )
+    )
+    if not _reply_skips_text(reply, source):
+        return reply
+    logger.error("этап: ответ не про присланный текст, прошу процитировать его")
+    return "".join(
+        ollama_client.generate_stream(
+            _fill(CHECK_RETRY_PROMPT, chapter=source, context=context, task=task),
+            system=_check_system(source),
+            temperature=0.2,
+        )
+    )
+
+
+def _present_check(reply: str, source: str, context: list[str] | None = None) -> str:
+    if not _reply_skips_text(reply, source):
+        return reply
+    return _unread_notice(source, reply, context)
+
+
 def _unread_notice(source: str, reply: str, context: list[str] | None = None) -> str:
     sent = " ".join(source.split())
     lines = [f"Вы прислали: «{sent[:500]}»", "", "Модель этот текст не разбирала."]
     stock = " ".join(reply.split())
     if stock:
         lines.append(f"Она ответила заготовкой: «{stock[:180]}».")
+    note = getattr(ollama_client, "template_note", "")
+    if note:
+        lines.extend(["", note])
     if context:
         lines.extend(["", "Из базы для сверки бралось:"])
         lines.extend(f"[{index}] {chunk}" for index, chunk in enumerate(context, start=1))
@@ -391,39 +425,34 @@ class RAGService:
             "type": "token",
             "text": f"По уже сохранённому тексту (фрагментов из базы: {len(context_chunks)})\n\n",
         }
-        rag_reply = "".join(
-            ollama_client.generate_stream(
-                _fill(
-                    CHECK_AGAINST_RAG_PROMPT,
-                    book=book_title,
-                    context=context,
-                    chapter=text,
-                ),
-                system=CHECK_SYSTEM_PROMPT,
-                temperature=0.2,
-            )
+        rag_reply = _ask_about_text(
+            _fill(
+                CHECK_AGAINST_RAG_PROMPT,
+                book=book_title,
+                context=context,
+                chapter=text,
+            ),
+            text,
+            task="Сверь присланный текст с фрагментами базы и назови противоречия.",
+            context=context,
         )
         logger.info("этап: сверка, прислано=%r, ответ=\n%s", _opening(text, 80), rag_reply)
-        if _reply_skips_text(rag_reply, text):
-            logger.error("этап: сверка не смотрела на присланный текст")
-            rag_reply = _unread_notice(text, rag_reply, context_chunks)
-        yield {"type": "token", "text": rag_reply}
+        yield {
+            "type": "token",
+            "text": _present_check(rag_reply, text, context_chunks),
+        }
 
         yield _stage("logic", "Проверяю логику нового отрывка…")
         logger.info("этап: логика нового отрывка, модель=%s", settings.llm_model)
         yield {"type": "token", "text": "\n\nЛогика нового отрывка\n\n"}
-        logic_reply = "".join(
-            ollama_client.generate_stream(
-                _fill(CHECK_LOGIC_PROMPT, book=book_title, chapter=text),
-                system=CHECK_SYSTEM_PROMPT,
-                temperature=0.2,
-            )
+        logic_reply = _ask_about_text(
+            _fill(CHECK_LOGIC_PROMPT, book=book_title, chapter=text),
+            text,
+            task="Проверь внутреннюю логику только присланного текста.",
+            context="База для этой части не нужна.",
         )
         logger.info("этап: логика, прислано=%r, ответ=\n%s", _opening(text, 80), logic_reply)
-        if _reply_skips_text(logic_reply, text):
-            logger.error("этап: логика не смотрела на присланный текст")
-            logic_reply = _unread_notice(text, logic_reply)
-        yield {"type": "token", "text": logic_reply}
+        yield {"type": "token", "text": _present_check(logic_reply, text)}
         yield {"type": "done"}
 
     def iter_save_chapter(

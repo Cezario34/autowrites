@@ -162,6 +162,40 @@ def test_check_does_not_treat_a_stock_reply_as_analysis(monkeypatch, book):
     assert "Логика нового отрывка\n\nВы прислали: «fsdf»" in answer
 
 
+def test_check_retries_until_the_reply_quotes_the_excerpt(monkeypatch, book):
+    sent = "Герой вошёл в комнату. У него были зелёные глаза и он сказал, что никогда не был в этом городе."
+    calls = {"n": 0}
+
+    def stream(prompt, system=None, temperature=0.3, response_format=None):
+        calls["n"] += 1
+        assert sent in prompt
+        assert sent in (system or "")
+        if calls["n"] % 2 == 1:
+            yield "Противоречий нет. Логика держится."
+            return
+        yield (
+            sent
+            + " Это противоречит уже записанной сцене: герой там уже живёт и помнит этот город."
+        )
+
+    _patch_pipeline(monkeypatch, stream)
+    monkeypatch.setattr(
+        vector_store,
+        "query",
+        lambda *args, **kwargs: {"documents": [["ранее"]]},
+    )
+
+    response = client.post(
+        "/api/check-chapter",
+        json={"text": sent, "book_id": book.id},
+    )
+    answer = "".join(event["text"] for event in _events(response) if event["type"] == "token")
+    assert calls["n"] == 4
+    assert "Вы прислали" not in answer
+    assert "уже живёт и помнит этот город" in answer
+    assert answer.count("Противоречий нет") == 0
+
+
 def test_check_searches_the_whole_excerpt_and_skips_character_cards(monkeypatch, book):
     calls = []
 
