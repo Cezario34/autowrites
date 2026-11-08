@@ -1,9 +1,12 @@
+import logging
 from collections.abc import Iterator
 
 import ollama
 
 from app.core.config import settings
 from app.core.prompts import SYSTEM_PROMPT
+
+logger = logging.getLogger("app.ollama")
 
 
 def _chunk_text(chunk: object) -> str:
@@ -40,7 +43,7 @@ class OllamaClient:
     ) -> str:
         # Ответ собираем из потока: иначе тело из нескольких JSON-строк
         # падает с «Extra data» при разборе одним объектом.
-        return "".join(
+        parts = list(
             self.generate_stream(
                 prompt,
                 system=system,
@@ -48,6 +51,15 @@ class OllamaClient:
                 response_format=response_format,
             )
         )
+        text = "".join(parts)
+        logger.info(
+            "этап: ответ модели, кусков=%s, символов=%s, format=%s\n%s",
+            len(parts),
+            len(text),
+            response_format or "-",
+            text,
+        )
+        return text
 
     def generate_stream(
         self,

@@ -164,6 +164,7 @@
 
       #status {
         margin: 0.4rem 0 0;
+        white-space: pre-wrap;
       }
 
       #meta {
@@ -406,8 +407,10 @@
             }
           }
         } catch (error) {
+          const message = error.message || "Не удалось обработать главу";
           status.hidden = false;
-          status.textContent = error.message || "Не удалось обработать главу";
+          status.textContent = message;
+          answer.textContent = message;
           progress.hidden = true;
         } finally {
           setBusy(false);

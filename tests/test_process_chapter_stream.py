@@ -239,7 +239,9 @@ def test_save_reports_unparsed_model_output(monkeypatch, book):
         json={"text": "Текст главы.", "book_id": book.id},
     )
     events = _events(response)
-    assert events[-1] == {"type": "error", "detail": "Модель вернула не список персонажей"}
+    detail = events[-1]["detail"]
+    assert detail.startswith("Модель вернула не список персонажей")
+    assert "Это описание героя, но не JSON." in detail
     listed = client.get(f"/api/books/{book.id}/characters")
     assert listed.json() == {"characters": []}
 
