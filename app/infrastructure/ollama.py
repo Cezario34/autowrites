@@ -36,11 +36,17 @@ class OllamaClient:
         prompt: str,
         system: str | None = None,
         temperature: float = 0.3,
+        response_format: str | None = None,
     ) -> str:
         # Ответ собираем из потока: иначе тело из нескольких JSON-строк
         # падает с «Extra data» при разборе одним объектом.
         return "".join(
-            self.generate_stream(prompt, system=system, temperature=temperature)
+            self.generate_stream(
+                prompt,
+                system=system,
+                temperature=temperature,
+                response_format=response_format,
+            )
         )
 
     def generate_stream(
@@ -48,13 +54,17 @@ class OllamaClient:
         prompt: str,
         system: str | None = None,
         temperature: float = 0.3,
+        response_format: str | None = None,
     ) -> Iterator[str]:
-        stream = self.client.chat(
-            model=self.llm_model,
-            messages=self._messages(prompt, system),
-            stream=True,
-            options=self._options(temperature),
-        )
+        request: dict = {
+            "model": self.llm_model,
+            "messages": self._messages(prompt, system),
+            "stream": True,
+            "options": self._options(temperature),
+        }
+        if response_format:
+            request["format"] = response_format
+        stream = self.client.chat(**request)
         for chunk in stream:
             text = _chunk_text(chunk)
             if text:

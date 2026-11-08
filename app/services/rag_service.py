@@ -45,14 +45,47 @@ def _stage(stage: str, message: str) -> dict[str, str]:
     return {"type": "stage", "stage": stage, "message": message}
 
 
+def _strip_fences(text: str) -> str:
+    stripped = text.strip()
+    if not stripped.startswith("```"):
+        return stripped
+    lines = stripped.splitlines()[1:]
+    if lines and lines[-1].strip().startswith("```"):
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
+
+
 def _model_payload(raw: str):
-    text = raw.strip()
-    if text.startswith("```"):
-        lines = text.splitlines()[1:]
-        if lines and lines[-1].strip().startswith("```"):
-            lines = lines[:-1]
-        text = "\n".join(lines).strip()
-    return json.loads(text)
+    text = _strip_fences(raw)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char not in "[{":
+            continue
+        try:
+            payload, _ = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, (list, dict)):
+            return payload
+    raise json.JSONDecodeError("В ответе нет JSON", text, 0)
+
+
+def _payload_list(payload, keys: tuple[str, ...]):
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        for key in keys:
+            value = payload.get(key)
+            if isinstance(value, list):
+                return value
+        lists = [value for value in payload.values() if isinstance(value, list)]
+        if len(lists) == 1:
+            return lists[0]
+    return None
 
 
 def parse_fragments(raw: str) -> list[str]:
@@ -60,8 +93,7 @@ def parse_fragments(raw: str) -> list[str]:
         payload = _model_payload(raw)
     except json.JSONDecodeError as exc:
         raise SplitError("Модель вернула не список фрагментов") from exc
-    if isinstance(payload, dict):
-        payload = payload.get("fragments") or payload.get("chunks")
+    payload = _payload_list(payload, ("fragments", "chunks", "items", "result"))
     if not isinstance(payload, list):
         raise SplitError("Модель вернула не список фрагментов")
 
@@ -85,8 +117,7 @@ def parse_characters(raw: str) -> list[Character]:
         payload = _model_payload(raw)
     except json.JSONDecodeError as exc:
         raise CharacterParseError("Модель вернула не список персонажей") from exc
-    if isinstance(payload, dict):
-        payload = payload.get("characters")
+    payload = _payload_list(payload, ("characters", "persons", "items", "result"))
     if not isinstance(payload, list):
         raise CharacterParseError("Модель вернула не список персонажей")
 
@@ -246,8 +277,13 @@ class RAGService:
             ),
             system=SPLIT_SYSTEM_PROMPT,
             temperature=0.1,
+            response_format="json",
         )
-        fragments = parse_fragments(raw)
+        try:
+            fragments = parse_fragments(raw)
+        except SplitError:
+            logger.info("этап: фрагменты не разобраны, начало=%r", raw[:300])
+            raise
         logger.info("этап: фрагментов=%s", len(fragments))
         yield _stage("characters", "Выписываю персонажей…")
         logger.info("этап: персонажи, модель=%s", settings.llm_model)
@@ -255,8 +291,13 @@ class RAGService:
             CHARACTER_CHAPTER_PROMPT.format(book=book_title, chapter=text),
             system=CHARACTER_SYSTEM_PROMPT,
             temperature=0.1,
+            response_format="json",
         )
-        found = parse_characters(raw_characters)
+        try:
+            found = parse_characters(raw_characters)
+        except CharacterParseError:
+            logger.info("этап: персонажи не разобраны, начало=%r", raw_characters[:300])
+            raise
         characters = merge_characters(character_store.list_for_book(book_id), found)
         logger.info(
             "этап: персонажей в главе=%s, всего=%s",

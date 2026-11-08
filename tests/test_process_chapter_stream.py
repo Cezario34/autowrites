@@ -115,9 +115,10 @@ def test_save_stores_fragments_and_character_cards(monkeypatch, caplog, book):
     def upsert(**kwargs):
         saved["upserts"].append(kwargs)
 
-    def generate(prompt, system=None, temperature=0.3):
+    def generate(prompt, system=None, temperature=0.3, response_format=None):
         saved["systems"].append(system)
         assert temperature == 0.1
+        assert response_format == "json"
         assert "Герой вошёл" in prompt
         return _save_reply(prompt, system, temperature)
 
@@ -176,7 +177,7 @@ def test_save_stores_fragments_and_character_cards(monkeypatch, caplog, book):
 def test_second_save_merges_character_json_and_database(monkeypatch, book):
     calls = {"people": []}
 
-    def generate(prompt, system=None, temperature=0.3):
+    def generate(prompt, system=None, temperature=0.3, response_format=None):
         people = calls["people"] or None
         return _save_reply(prompt, people=people)
 
@@ -213,7 +214,7 @@ def test_second_save_merges_character_json_and_database(monkeypatch, book):
 
 
 def test_save_reports_unparsed_model_output(monkeypatch, book):
-    def generate(prompt, system=None, temperature=0.3):
+    def generate(prompt, system=None, temperature=0.3, response_format=None):
         if "персонаж" in prompt.casefold():
             return "Это описание героя, но не JSON."
         return '["Текст главы."]'
