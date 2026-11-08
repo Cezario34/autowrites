@@ -390,7 +390,10 @@
                   "» · Сохранено: " +
                   item.chunks_added +
                   " · Персонажей: " +
-                  item.characters.length;
+                  item.characters.length +
+                  (item.split_by === "chapter"
+                    ? " · главу нарезал сам, модель ответила разбором"
+                    : "");
                 showCharacters(item.characters);
                 answer.textContent = item.fragments
                   .map((piece, index) => index + 1 + ". " + piece)
@@ -409,7 +412,7 @@
         } catch (error) {
           const message = error.message || "Не удалось обработать главу";
           status.hidden = false;
-          status.textContent = message;
+          status.textContent = message.split("\n")[0];
           answer.textContent = message;
           progress.hidden = true;
         } finally {
