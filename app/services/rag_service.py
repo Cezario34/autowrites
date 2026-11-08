@@ -10,7 +10,9 @@ from app.core.config import settings
 from app.core.prompts import (
     CHARACTER_CHAPTER_PROMPT,
     CHARACTER_SYSTEM_PROMPT,
-    CHECK_CHAPTER_PROMPT,
+    CHECK_AGAINST_RAG_PROMPT,
+    CHECK_LOGIC_PROMPT,
+    CHECK_SYSTEM_PROMPT,
     SPLIT_CHAPTER_PROMPT,
     SPLIT_SYSTEM_PROMPT,
 )
@@ -44,6 +46,20 @@ class CharacterParseError(Exception):
 
 def _stage(stage: str, message: str) -> dict[str, str]:
     return {"type": "stage", "stage": stage, "message": message}
+
+
+def _text_windows(text: str, size: int = 2000) -> list[str]:
+    """Начало, середина и конец длинного отрывка, чтобы сверка не смотрела только в начало."""
+    stripped = text.strip()
+    if len(stripped) <= size:
+        return [stripped] if stripped else []
+    middle = max(0, len(stripped) // 2 - size // 2)
+    windows = [stripped[:size], stripped[middle : middle + size], stripped[-size:]]
+    unique: list[str] = []
+    for window in windows:
+        if window not in unique:
+            unique.append(window)
+    return unique
 
 
 def _strip_fences(text: str) -> str:
@@ -274,8 +290,24 @@ class RAGService:
             where={"book_id": book_id},
         )
 
-        documents = results.get("documents", [[]])[0]
-        return documents or []
+        documents = results.get("documents", [[]])[0] or []
+        metadatas = results.get("metadatas", [[]])[0] or []
+        kept: list[str] = []
+        for index, document in enumerate(documents):
+            meta = metadatas[index] if index < len(metadatas) and metadatas[index] else {}
+            if meta.get("kind") == "character" or not document:
+                continue
+            kept.append(document)
+        return kept
+
+    def saved_fragments(self, text: str, book_id: str) -> list[str]:
+        """Ищет сохранённые фрагменты по началу, середине и концу нового отрывка."""
+        found: list[str] = []
+        for window in _text_windows(text):
+            for chunk in self.query(window, book_id, n_results=settings.top_k):
+                if chunk not in found:
+                    found.append(chunk)
+        return found[: settings.top_k * 2]
 
     def iter_check_chapter(
         self,
@@ -283,7 +315,7 @@ class RAGService:
         book_id: str,
         book_title: str,
     ) -> Iterator[dict]:
-        """Проверяет главу только по уже сохранённым фрагментам книги."""
+        """Сверяет отрывок с базой и отдельно проверяет его внутреннюю логику."""
         logger.info(
             "этап: проверка, книга=%s (%s), символов=%s",
             book_title,
@@ -292,17 +324,14 @@ class RAGService:
         )
         yield _stage("start", "Идёт проверка…")
         yield _stage("search", "Ищу в книге…")
-        context_chunks = self.query(text, book_id, n_results=settings.top_k)
+        context_chunks = self.saved_fragments(text, book_id)
         logger.info("этап: поиск, фрагментов=%s", len(context_chunks))
         context = (
-            "\n\n---\n\n".join(context_chunks)
+            "\n\n---\n\n".join(
+                f"[{index}] {chunk}" for index, chunk in enumerate(context_chunks, start=1)
+            )
             if context_chunks
-            else "Контекст отсутствует."
-        )
-        prompt = CHECK_CHAPTER_PROMPT.format(
-            book=book_title,
-            context=context,
-            chapter=text,
+            else "В базе по этой книге пока нет сохранённых фрагментов."
         )
         yield {
             "type": "meta",
@@ -311,15 +340,36 @@ class RAGService:
             "context_chunks": context_chunks,
             "original_length": len(text),
         }
-        yield _stage("generate", "Генерирую ответ…")
-        logger.info("этап: генерация, модель=%s", settings.llm_model)
+        yield _stage("rag", "Сверяю с сохранённым текстом…")
+        logger.info("этап: сверка с базой, модель=%s", settings.llm_model)
+        yield {
+            "type": "token",
+            "text": f"По уже сохранённому тексту (фрагментов из базы: {len(context_chunks)})\n\n",
+        }
+        for piece in ollama_client.generate_stream(
+            CHECK_AGAINST_RAG_PROMPT.format(
+                book=book_title,
+                context=context,
+                chapter=text,
+            ),
+            system=CHECK_SYSTEM_PROMPT,
+            temperature=0.2,
+        ):
+            yield {"type": "token", "text": piece}
 
+        yield _stage("logic", "Проверяю логику нового отрывка…")
+        logger.info("этап: логика нового отрывка, модель=%s", settings.llm_model)
+        yield {"type": "token", "text": "\n\nЛогика нового отрывка\n\n"}
         parts: list[str] = []
-        for piece in ollama_client.generate_stream(prompt):
+        for piece in ollama_client.generate_stream(
+            CHECK_LOGIC_PROMPT.format(book=book_title, chapter=text),
+            system=CHECK_SYSTEM_PROMPT,
+            temperature=0.2,
+        ):
             parts.append(piece)
             yield {"type": "token", "text": piece}
 
-        logger.info("этап: готово, символов ответа=%s", sum(len(part) for part in parts))
+        logger.info("этап: готово, символов логики=%s", sum(len(part) for part in parts))
         yield {"type": "done"}
 
     def iter_save_chapter(
