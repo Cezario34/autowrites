@@ -1,9 +1,12 @@
+import logging
 from collections.abc import Iterator
 
 import ollama
 
 from app.core.config import settings
 from app.core.prompts import SYSTEM_PROMPT
+
+logger = logging.getLogger("app.ollama")
 
 
 def _chunk_text(chunk: object) -> str:
@@ -19,15 +22,6 @@ class OllamaClient:
         self.llm_model = settings.llm_model
         self.embedding_model = settings.embedding_model
 
-    def _messages(self, prompt: str, system: str | None) -> list[dict[str, str]]:
-        messages: list[dict[str, str]] = []
-        # Если системный промпт не передали — берём дефолтный
-        system_prompt = system if system is not None else SYSTEM_PROMPT
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
-        return messages
-
     def _options(self, temperature: float) -> dict[str, float | int]:
         return {"temperature": temperature, "num_ctx": 16384}
 
@@ -36,26 +30,54 @@ class OllamaClient:
         prompt: str,
         system: str | None = None,
         temperature: float = 0.3,
+        response_format: str | None = None,
     ) -> str:
-        response = self.client.chat(
-            model=self.llm_model,
-            messages=self._messages(prompt, system),
-            options=self._options(temperature),
+        # Ответ собираем из потока: иначе тело из нескольких JSON-строк
+        # падает с «Extra data» при разборе одним объектом.
+        parts = list(
+            self.generate_stream(
+                prompt,
+                system=system,
+                temperature=temperature,
+                response_format=response_format,
+            )
         )
-        return response["message"]["content"]
+        text = "".join(parts)
+        logger.info(
+            "этап: ответ модели, кусков=%s, символов=%s, format=%s\n%s",
+            len(parts),
+            len(text),
+            response_format or "-",
+            text,
+        )
+        return text
 
     def generate_stream(
         self,
         prompt: str,
         system: str | None = None,
         temperature: float = 0.3,
+        response_format: str | None = None,
     ) -> Iterator[str]:
-        stream = self.client.chat(
-            model=self.llm_model,
-            messages=self._messages(prompt, system),
-            stream=True,
-            options=self._options(temperature),
+        system_prompt = SYSTEM_PROMPT if system is None else system
+        messages: list[dict[str, str]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        logger.info(
+            "этап: запрос модели, chat, символов=%s, system=%s",
+            len(prompt),
+            system_prompt.splitlines()[0] if system_prompt else "-",
         )
+        request: dict = {
+            "model": self.llm_model,
+            "messages": messages,
+            "stream": True,
+            "options": self._options(temperature),
+        }
+        if response_format:
+            request["format"] = response_format
+        stream = self.client.chat(**request)
         for chunk in stream:
             text = _chunk_text(chunk)
             if text:

@@ -10,3 +10,12 @@ class BookResponse(BaseModel):
     title: str
     created_at: str
     chunk_count: int
+
+
+class CharacterResponse(BaseModel):
+    name: str
+    description: str
+
+
+class CharacterListResponse(BaseModel):
+    characters: list[CharacterResponse]

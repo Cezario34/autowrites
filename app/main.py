@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 
 from app.core.logging import configure_logging
+from app.infrastructure.api_path import NormalizeApiPathMiddleware
 from app.infrastructure.cors import add_cors
 from app.infrastructure.static import mount_frontend
 from app.presentation.routers.books import router as books_router
@@ -14,6 +15,7 @@ configure_logging()
 app = FastAPI(title="AutoWriter API", version="0.1.0")
 
 add_cors(app)
+app.add_middleware(NormalizeApiPathMiddleware)
 app.include_router(books_router)
 app.include_router(check_text_router)
 app.include_router(health_router)

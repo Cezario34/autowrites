@@ -1,7 +1,15 @@
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
+
+
+class FrontendFiles(StaticFiles):
+    async def get_response(self, path: str, scope):
+        url_path = scope.get("path") or ""
+        if url_path == "/api" or url_path.startswith("/api/"):
+            raise HTTPException(status_code=404, detail="Маршрут не найден")
+        return await super().get_response(path, scope)
 
 
 def resolve_frontend_directory(repository_root: Path) -> Path:
@@ -23,6 +31,6 @@ def mount_frontend(app: FastAPI) -> None:
     if frontend_path.exists():
         app.mount(
             "/",
-            StaticFiles(directory=str(frontend_path), html=True),
+            FrontendFiles(directory=str(frontend_path), html=True),
             name="frontend",
         )

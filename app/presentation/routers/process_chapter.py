@@ -17,6 +17,14 @@ logger = logging.getLogger("app.api")
 router = APIRouter()
 
 
+def _public_error(exc: Exception) -> str:
+    message = str(exc).strip()
+    lowered = message.casefold()
+    if "<!doctype" in lowered or "<html" in lowered:
+        return "Сервер модели не принял запрос (404). Разбор текста не начался."
+    return message or "Не удалось обработать главу"
+
+
 def _ndjson(events: Iterator[dict]) -> StreamingResponse:
     def body():
         try:
@@ -24,7 +32,7 @@ def _ndjson(events: Iterator[dict]) -> StreamingResponse:
                 yield json.dumps(event, ensure_ascii=False) + "\n"
         except Exception as exc:
             logger.exception("этап: ошибка")
-            message = str(exc) or "Не удалось обработать главу"
+            message = _public_error(exc)
             yield json.dumps(
                 {"type": "error", "detail": message},
                 ensure_ascii=False,

@@ -31,6 +31,20 @@ class VectorStore:
             metadatas=metadatas,
         )
 
+    def upsert(
+        self,
+        ids: list[str],
+        embeddings: list[list[float]],
+        documents: list[str],
+        metadatas: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self.collection.upsert(
+            ids=ids,
+            embeddings=embeddings,
+            documents=documents,
+            metadatas=metadatas,
+        )
+
     def count_where(self, where: dict[str, Any]) -> int:
         found = self.collection.get(where=where, include=["metadatas"])
         return len(found.get("ids") or [])
