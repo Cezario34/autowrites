@@ -8,12 +8,17 @@ from app.core.prompts import SYSTEM_PROMPT
 
 logger = logging.getLogger("app.ollama")
 
+# Свой шаблон на один запрос: иначе Modelfile модели подставляет
+# готовую фразу вроде «Противоречий нет» и затирает разбор.
+OWN_TEMPLATE = "{{ if .System }}{{ .System }}\n\n{{ end }}{{ .Prompt }}"
 
-def _chunk_text(chunk: object) -> str:
-    message = chunk.message if hasattr(chunk, "message") else chunk["message"]
-    if isinstance(message, dict):
-        return message.get("content") or ""
-    return getattr(message, "content", None) or ""
+
+def _generate_piece(chunk: object) -> str:
+    if hasattr(chunk, "response"):
+        return chunk.response or ""
+    if isinstance(chunk, dict):
+        return chunk.get("response") or ""
+    return ""
 
 
 class OllamaClient:
@@ -21,15 +26,6 @@ class OllamaClient:
         self.client = ollama.Client(host=settings.ollama_base_url)
         self.llm_model = settings.llm_model
         self.embedding_model = settings.embedding_model
-
-    def _messages(self, prompt: str, system: str | None) -> list[dict[str, str]]:
-        messages: list[dict[str, str]] = []
-        # Если системный промпт не передали — берём дефолтный
-        system_prompt = system if system is not None else SYSTEM_PROMPT
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
-        return messages
 
     def _options(self, temperature: float) -> dict[str, float | int]:
         return {"temperature": temperature, "num_ctx": 16384}
@@ -68,17 +64,26 @@ class OllamaClient:
         temperature: float = 0.3,
         response_format: str | None = None,
     ) -> Iterator[str]:
+        system_prompt = system if system is not None else SYSTEM_PROMPT
+        logger.info(
+            "этап: запрос модели, свой шаблон, символов=%s, system=%s",
+            len(prompt),
+            (system_prompt or "").splitlines()[0] if system_prompt else "-",
+        )
         request: dict = {
             "model": self.llm_model,
-            "messages": self._messages(prompt, system),
+            "prompt": prompt,
+            "system": system_prompt,
+            "template": OWN_TEMPLATE,
+            "raw": False,
             "stream": True,
             "options": self._options(temperature),
         }
         if response_format:
             request["format"] = response_format
-        stream = self.client.chat(**request)
+        stream = self.client.generate(**request)
         for chunk in stream:
-            text = _chunk_text(chunk)
+            text = _generate_piece(chunk)
             if text:
                 yield text
 
