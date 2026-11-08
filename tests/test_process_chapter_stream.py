@@ -169,7 +169,9 @@ def test_check_retries_until_the_reply_quotes_the_excerpt(monkeypatch, book):
     def stream(prompt, system=None, temperature=0.3, response_format=None):
         calls["n"] += 1
         assert sent in prompt
-        assert sent in (system or "")
+        assert sent not in (system or "")
+        assert "Противоречий нет" not in prompt
+        assert "Противоречий нет" not in (system or "")
         if calls["n"] % 2 == 1:
             yield "Противоречий нет. Логика держится."
             return

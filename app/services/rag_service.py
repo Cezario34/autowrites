@@ -82,15 +82,11 @@ def _reply_skips_text(reply: str, source: str) -> bool:
     return compact_source[:48].casefold() not in compact_reply.casefold()
 
 
-def _check_system(text: str) -> str:
-    return CHECK_SYSTEM_PROMPT + "\n\nПрисланный текст, его нужно разобрать:\n" + text
-
-
 def _ask_about_text(prompt: str, source: str, task: str, context: str) -> str:
     reply = "".join(
         ollama_client.generate_stream(
             prompt,
-            system=_check_system(source),
+            system=CHECK_SYSTEM_PROMPT,
             temperature=0.2,
         )
     )
@@ -100,7 +96,7 @@ def _ask_about_text(prompt: str, source: str, task: str, context: str) -> str:
     return "".join(
         ollama_client.generate_stream(
             _fill(CHECK_RETRY_PROMPT, chapter=source, context=context, task=task),
-            system=_check_system(source),
+            system=CHECK_SYSTEM_PROMPT,
             temperature=0.2,
         )
     )
@@ -118,9 +114,6 @@ def _unread_notice(source: str, reply: str, context: list[str] | None = None) ->
     stock = " ".join(reply.split())
     if stock:
         lines.append(f"Она ответила заготовкой: «{stock[:180]}».")
-    note = getattr(ollama_client, "template_note", "")
-    if note:
-        lines.extend(["", note])
     if context:
         lines.extend(["", "Из базы для сверки бралось:"])
         lines.extend(f"[{index}] {chunk}" for index, chunk in enumerate(context, start=1))
