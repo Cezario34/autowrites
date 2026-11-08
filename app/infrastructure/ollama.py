@@ -31,11 +31,16 @@ def _plain_prompt(system: str, prompt: str) -> str:
     return prompt
 
 
+# Шаблон без заготовки «Противоречий нет»: в него попадают и задание, и присланный текст.
+OPEN_TEMPLATE = "{{ if .System }}{{ .System }}\n\n{{ end }}{{ .Prompt }}"
+
+
 class OllamaClient:
     def __init__(self) -> None:
         self.client = ollama.Client(host=settings.ollama_base_url)
         self.llm_model = settings.llm_model
         self.embedding_model = settings.embedding_model
+        self._reading_model_name: str | None = None
 
     def _options(self, temperature: float) -> dict[str, float | int]:
         return {"temperature": temperature, "num_ctx": 16384}
@@ -81,8 +86,9 @@ class OllamaClient:
             len(prompt),
             " ".join(prompt.split())[:120],
         )
+        model = self._reading_model()
         try:
-            yield from self._raw_stream(plain, temperature, response_format)
+            yield from self._raw_stream(model, plain, temperature, response_format)
             return
         except ResponseError as exc:
             if exc.status_code != 404:
@@ -90,10 +96,42 @@ class OllamaClient:
             logger.error(
                 "этап: /api/generate нет, остаюсь на /api/chat. Шаблон модели может выкинуть текст."
             )
-        yield from self._chat_stream(prompt, system_prompt, temperature, response_format)
+        yield from self._chat_stream(
+            model, prompt, system_prompt, temperature, response_format
+        )
+
+    def _reading_model(self) -> str:
+        if self._reading_model_name:
+            return self._reading_model_name
+        plain = f"{self.llm_model}-read"
+        try:
+            self.client.show(plain)
+            self._reading_model_name = plain
+            logger.info("этап: разбор идёт моделью %s", plain)
+            return plain
+        except Exception:
+            pass
+        try:
+            shown = self.client.show(self.llm_model)
+            template = getattr(shown, "template", None) or ""
+            logger.info("этап: шаблон %s:\n%s", self.llm_model, template[:2000])
+            self.client.create(
+                model=plain,
+                from_=self.llm_model,
+                template=OPEN_TEMPLATE,
+                system="Отвечай только по присланному тексту. Заготовленные фразы не используй.",
+                stream=False,
+            )
+            self._reading_model_name = plain
+            logger.info("этап: для разбора создана %s, старый шаблон не используется", plain)
+        except Exception as exc:
+            logger.error("этап: шаблон модели не заменён: %s", exc)
+            self._reading_model_name = self.llm_model
+        return self._reading_model_name
 
     def _raw_stream(
         self,
+        model: str,
         prompt: str,
         temperature: float,
         response_format: str | None,
@@ -101,7 +139,7 @@ class OllamaClient:
         # raw обходит шаблон Modelfile: иначе модель не видит присланный текст
         # и отвечает заготовкой вроде «Противоречий нет».
         request: dict = {
-            "model": self.llm_model,
+            "model": model,
             "prompt": prompt,
             "raw": True,
             "stream": True,
@@ -118,6 +156,7 @@ class OllamaClient:
 
     def _chat_stream(
         self,
+        model: str,
         prompt: str,
         system_prompt: str,
         temperature: float,
@@ -128,7 +167,7 @@ class OllamaClient:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": prompt})
         request: dict = {
-            "model": self.llm_model,
+            "model": model,
             "messages": messages,
             "stream": True,
             "think": False,

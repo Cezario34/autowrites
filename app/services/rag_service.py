@@ -60,11 +60,37 @@ def _opening(text: str, limit: int = 48) -> str:
     return " ".join(text.split())[:limit]
 
 
+def _is_stock_reply(reply: str) -> bool:
+    folded = " ".join(reply.split()).casefold().strip(" .!")
+    if not folded:
+        return True
+    if folded.startswith("противоречий нет"):
+        return True
+    return "логика держится" in folded and len(folded) < 160
+
+
 def _reply_skips_text(reply: str, source: str) -> bool:
-    opening = _opening(source)
-    if len(opening) < 12:
+    if _is_stock_reply(reply):
+        return True
+    compact_source = " ".join(source.split())
+    compact_reply = " ".join(reply.split())
+    if not compact_source:
         return False
-    return opening.casefold() not in " ".join(reply.split()).casefold()
+    if len(compact_source) <= 80:
+        return compact_source.casefold() not in compact_reply.casefold()
+    return compact_source[:48].casefold() not in compact_reply.casefold()
+
+
+def _unread_notice(source: str, reply: str, context: list[str] | None = None) -> str:
+    sent = " ".join(source.split())
+    lines = [f"Вы прислали: «{sent[:500]}»", "", "Модель этот текст не разбирала."]
+    stock = " ".join(reply.split())
+    if stock:
+        lines.append(f"Она ответила заготовкой: «{stock[:180]}».")
+    if context:
+        lines.extend(["", "Из базы для сверки бралось:"])
+        lines.extend(f"[{index}] {chunk}" for index, chunk in enumerate(context, start=1))
+    return "\n".join(lines)
 
 
 def _text_windows(text: str, size: int = 2000) -> list[str]:
@@ -365,50 +391,39 @@ class RAGService:
             "type": "token",
             "text": f"По уже сохранённому тексту (фрагментов из базы: {len(context_chunks)})\n\n",
         }
-        rag_parts: list[str] = []
-        for piece in ollama_client.generate_stream(
-            _fill(
-                CHECK_AGAINST_RAG_PROMPT,
-                book=book_title,
-                context=context,
-                chapter=text,
-            ),
-            system=CHECK_SYSTEM_PROMPT,
-            temperature=0.2,
-        ):
-            rag_parts.append(piece)
-            yield {"type": "token", "text": piece}
-        rag_reply = "".join(rag_parts)
-        logger.info("этап: сверка, ответ=\n%s", rag_reply)
-        if _reply_skips_text(rag_reply, text):
-            note = (
-                "\n\nМодель не разобрала присланный отрывок: в ответе нет его начала. "
-                f"В запрос оно входило: «{_opening(text, 80)}»."
+        rag_reply = "".join(
+            ollama_client.generate_stream(
+                _fill(
+                    CHECK_AGAINST_RAG_PROMPT,
+                    book=book_title,
+                    context=context,
+                    chapter=text,
+                ),
+                system=CHECK_SYSTEM_PROMPT,
+                temperature=0.2,
             )
-            logger.error("этап: сверка пропустила текст, начало=%s", _opening(text, 80))
-            yield {"type": "token", "text": note}
+        )
+        logger.info("этап: сверка, прислано=%r, ответ=\n%s", _opening(text, 80), rag_reply)
+        if _reply_skips_text(rag_reply, text):
+            logger.error("этап: сверка не смотрела на присланный текст")
+            rag_reply = _unread_notice(text, rag_reply, context_chunks)
+        yield {"type": "token", "text": rag_reply}
 
         yield _stage("logic", "Проверяю логику нового отрывка…")
         logger.info("этап: логика нового отрывка, модель=%s", settings.llm_model)
         yield {"type": "token", "text": "\n\nЛогика нового отрывка\n\n"}
-        parts: list[str] = []
-        for piece in ollama_client.generate_stream(
-            _fill(CHECK_LOGIC_PROMPT, book=book_title, chapter=text),
-            system=CHECK_SYSTEM_PROMPT,
-            temperature=0.2,
-        ):
-            parts.append(piece)
-            yield {"type": "token", "text": piece}
-
-        logic_reply = "".join(parts)
-        logger.info("этап: логика, ответ=\n%s", logic_reply)
-        if _reply_skips_text(logic_reply, text):
-            note = (
-                "\n\nМодель не разобрала присланный отрывок: в ответе нет его начала. "
-                f"В запрос оно входило: «{_opening(text, 80)}»."
+        logic_reply = "".join(
+            ollama_client.generate_stream(
+                _fill(CHECK_LOGIC_PROMPT, book=book_title, chapter=text),
+                system=CHECK_SYSTEM_PROMPT,
+                temperature=0.2,
             )
-            logger.error("этап: логика пропустила текст, начало=%s", _opening(text, 80))
-            yield {"type": "token", "text": note}
+        )
+        logger.info("этап: логика, прислано=%r, ответ=\n%s", _opening(text, 80), logic_reply)
+        if _reply_skips_text(logic_reply, text):
+            logger.error("этап: логика не смотрела на присланный текст")
+            logic_reply = _unread_notice(text, logic_reply)
+        yield {"type": "token", "text": logic_reply}
         yield {"type": "done"}
 
     def iter_save_chapter(
