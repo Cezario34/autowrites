@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 from app.core.config import settings
 from app.core.prompts import (
-    SYSTEM_PROMPT,
+    CHECK_SYSTEM_PROMPT,
     CHARACTER_CHAPTER_PROMPT,
     CHARACTER_SYSTEM_PROMPT,
     CHECK_AGAINST_RAG_PROMPT,
@@ -70,34 +70,34 @@ def _is_stock_reply(reply: str) -> bool:
     return "логика держится" in folded and len(folded) < 160
 
 
-def _reply_skips_text(reply: str, source: str) -> bool:
-    if _is_stock_reply(reply):
-        return True
-    compact_source = " ".join(source.split())
-    compact_reply = " ".join(reply.split())
-    if not compact_source:
-        return False
-    if len(compact_source) <= 80:
-        return compact_source.casefold() not in compact_reply.casefold()
-    return compact_source[:48].casefold() not in compact_reply.casefold()
+# Короткий разбор, а не переписывание главы: 32B иначе копирует новый отрывок целиком.
+CHECK_MAX_TOKENS = 600
+
+
+def _reply_skips_text(reply: str, _source: str) -> bool:
+    # Повтор только на заготовку. Требовать начало главы нельзя:
+    # модель тогда переписывает новый отрывок целиком.
+    return _is_stock_reply(reply)
 
 
 def _ask_about_text(prompt: str, source: str, task: str, context: str) -> str:
     reply = "".join(
         ollama_client.generate_stream(
             prompt,
-            system=SYSTEM_PROMPT,
+            system=CHECK_SYSTEM_PROMPT,
             temperature=0.3,
+            num_predict=CHECK_MAX_TOKENS,
         )
     )
     if not _reply_skips_text(reply, source):
         return reply
-    logger.error("этап: ответ не про присланный текст, прошу процитировать его")
+    logger.error("этап: ответ не про присланный текст, прошу проверить его ещё раз")
     return "".join(
         ollama_client.generate_stream(
             _fill(CHECK_RETRY_PROMPT, chapter=source, context=context, task=task),
-            system=SYSTEM_PROMPT,
-            temperature=0.7,
+            system=CHECK_SYSTEM_PROMPT,
+            temperature=0.3,
+            num_predict=CHECK_MAX_TOKENS,
         )
     )
 
@@ -426,7 +426,7 @@ class RAGService:
                 chapter=text,
             ),
             text,
-            task="Сравни цитату из присланного текста с цитатой из базы и напиши, про одни ли это события.",
+            task="Сверь новый отрывок с сохранённым своими словами и назови расхождения. Не цитируй.",
             context=context,
         )
         logger.info("этап: сверка, прислано=%r, ответ=\n%s", _opening(text, 80), rag_reply)
@@ -441,7 +441,7 @@ class RAGService:
         logic_reply = _ask_about_text(
             _fill(CHECK_LOGIC_PROMPT, book=book_title, chapter=text),
             text,
-            task="По цитатам разбери, кто действует, где находится и что из чего следует.",
+            task="Проверь, кто действует и следует ли одно действие из другого. Не цитируй.",
             context="База для этой части не нужна.",
         )
         logger.info("этап: логика, прислано=%r, ответ=\n%s", _opening(text, 80), logic_reply)
