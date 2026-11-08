@@ -1,10 +1,15 @@
+import json
 import logging
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
 
 from app.core.config import settings
-from app.core.prompts import CHECK_CHAPTER_PROMPT
+from app.core.prompts import (
+    CHECK_CHAPTER_PROMPT,
+    SPLIT_CHAPTER_PROMPT,
+    SPLIT_SYSTEM_PROMPT,
+)
 from app.infrastructure.ollama import ollama_client
 from app.infrastructure.vector_store import vector_store
 from app.services.chunker import split_text
@@ -20,8 +25,43 @@ class RAGResult:
     chunks_added: int
 
 
+class SplitError(Exception):
+    """Модель не вернула пригодный список фрагментов."""
+
+
 def _stage(stage: str, message: str) -> dict[str, str]:
     return {"type": "stage", "stage": stage, "message": message}
+
+
+def parse_fragments(raw: str) -> list[str]:
+    text = raw.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise SplitError("Модель вернула не список фрагментов") from exc
+    if isinstance(payload, dict):
+        payload = payload.get("fragments") or payload.get("chunks")
+    if not isinstance(payload, list):
+        raise SplitError("Модель вернула не список фрагментов")
+
+    fragments: list[str] = []
+    for item in payload:
+        if isinstance(item, str):
+            piece = item.strip()
+        elif isinstance(item, dict):
+            piece = str(item.get("text") or item.get("content") or "").strip()
+        else:
+            piece = ""
+        if piece:
+            fragments.append(piece)
+    if not fragments:
+        raise SplitError("Модель не вернула фрагменты")
+    return fragments
 
 
 class RAGService:
@@ -82,49 +122,21 @@ class RAGService:
         documents = results.get("documents", [[]])[0]
         return documents or []
 
-    def iter_process_chapter(
+    def iter_check_chapter(
         self,
         text: str,
         book_id: str,
         book_title: str,
-        add_to_store: bool = True,
     ) -> Iterator[dict]:
-        """
-        Полный цикл с событиями для стрима:
-        1. (опционально) добавляет главу в базу
-        2. ищет релевантный контекст
-        3. формирует промпт
-        4. отдаёт ответ модели по кускам
-        """
+        """Проверяет главу только по уже сохранённым фрагментам книги."""
         logger.info(
-            "этап: старт, книга=%s (%s), символов=%s, в базу=%s",
+            "этап: проверка, книга=%s (%s), символов=%s",
             book_title,
             book_id,
             len(text),
-            add_to_store,
         )
-        yield _stage("start", "Идёт обработка…")
-
-        chunks_added = 0
-        if add_to_store:
-            yield _stage("chunk", "Нарезаю главу…")
-            chunks = split_text(text)
-            logger.info("этап: нарезка, чанков=%s", len(chunks))
-            if chunks:
-                yield _stage("embed", "Считаю эмбеддинги…")
-                logger.info(
-                    "этап: эмбеддинги, чанков=%s, модель=%s",
-                    len(chunks),
-                    settings.embedding_model,
-                )
-                embeddings = embedding_service.embed_batch(chunks)
-                yield _stage("store", "Сохраняю главу…")
-                chunks_added = self._save_chunks(chunks, embeddings, book_id)
-                logger.info("этап: запись в базу, чанков=%s", chunks_added)
-            else:
-                logger.info("этап: запись в базу пропущена, чанков=0")
-
-        yield _stage("search", "Ищу контекст…")
+        yield _stage("start", "Идёт проверка…")
+        yield _stage("search", "Ищу в книге…")
         context_chunks = self.query(text, book_id, n_results=settings.top_k)
         logger.info("этап: поиск, фрагментов=%s", len(context_chunks))
         context = (
@@ -137,12 +149,10 @@ class RAGService:
             context=context,
             chapter=text,
         )
-
         yield {
             "type": "meta",
             "book_id": book_id,
             "book_title": book_title,
-            "chunks_added": chunks_added,
             "context_chunks": context_chunks,
             "original_length": len(text),
         }
@@ -157,31 +167,66 @@ class RAGService:
         logger.info("этап: готово, символов ответа=%s", sum(len(part) for part in parts))
         yield {"type": "done"}
 
-    def process_chapter(
+    def iter_save_chapter(
         self,
         text: str,
         book_id: str,
         book_title: str,
-        add_to_store: bool = True,
-    ) -> RAGResult:
+    ) -> Iterator[dict]:
+        """Просит модель разрезать главу и сохраняет фрагменты без разбора."""
+        logger.info(
+            "этап: сохранение, книга=%s (%s), символов=%s",
+            book_title,
+            book_id,
+            len(text),
+        )
+        yield _stage("start", "Идёт сохранение…")
+        yield _stage("split", "Модель разбивает текст…")
+        logger.info("этап: разбиение, модель=%s", settings.llm_model)
+        raw = ollama_client.generate(
+            SPLIT_CHAPTER_PROMPT.format(
+                book=book_title,
+                chapter=text,
+                chunk_size=settings.chunk_size,
+            ),
+            system=SPLIT_SYSTEM_PROMPT,
+            temperature=0.1,
+        )
+        fragments = parse_fragments(raw)
+        logger.info("этап: фрагментов=%s", len(fragments))
+        yield _stage("embed", "Считаю эмбеддинги…")
+        logger.info(
+            "этап: эмбеддинги, чанков=%s, модель=%s",
+            len(fragments),
+            settings.embedding_model,
+        )
+        embeddings = embedding_service.embed_batch(fragments)
+        yield _stage("store", "Сохраняю фрагменты…")
+        chunks_added = self._save_chunks(fragments, embeddings, book_id)
+        logger.info("этап: запись в базу, чанков=%s", chunks_added)
+        yield {
+            "type": "saved",
+            "book_id": book_id,
+            "book_title": book_title,
+            "fragments": fragments,
+            "chunks_added": chunks_added,
+            "original_length": len(text),
+        }
+        logger.info("этап: сохранено, чанков=%s", chunks_added)
+        yield {"type": "done"}
+
+    def check_chapter(self, text: str, book_id: str, book_title: str) -> RAGResult:
         parts: list[str] = []
         context_chunks: list[str] = []
-        chunks_added = 0
-        for event in self.iter_process_chapter(
-            text,
-            book_id=book_id,
-            book_title=book_title,
-            add_to_store=add_to_store,
-        ):
+        for event in self.iter_check_chapter(text, book_id, book_title):
             if event["type"] == "token":
                 parts.append(event["text"])
             elif event["type"] == "meta":
                 context_chunks = list(event["context_chunks"])
-                chunks_added = event["chunks_added"]
         return RAGResult(
             answer="".join(parts),
             context_chunks=context_chunks,
-            chunks_added=chunks_added,
+            chunks_added=0,
         )
 
 

@@ -43,12 +43,13 @@ def test_unknown_book_is_rejected_before_generation(tmp_path, monkeypatch):
     from app.infrastructure.ollama import ollama_client
 
     monkeypatch.setattr(ollama_client, "generate_stream", stream)
-    response = client.post(
-        "/api/process-chapter",
-        json={"text": "Текст главы.", "book_id": "missing-book"},
-    )
-    assert response.status_code == 400
-    assert response.json() == {"detail": "Книга не найдена"}
+    for path in ("/api/check-chapter", "/api/save-chapter"):
+        response = client.post(
+            path,
+            json={"text": "Текст главы.", "book_id": "missing-book"},
+        )
+        assert response.status_code == 400
+        assert response.json() == {"detail": "Книга не найдена"}
     assert called["stream"] is False
 
 
