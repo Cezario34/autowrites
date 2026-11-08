@@ -94,7 +94,8 @@ def test_check_uses_existing_rag_and_does_not_save(monkeypatch, caplog, book):
     assert "ранее" not in logic_prompt[0]
     assert "Герой" in logic_prompt[0]
     assert "внутреннюю логику" in logic_prompt[0]
-    assert rag_prompt[2] == logic_prompt[2] == 0.2
+    assert rag_prompt[2] == logic_prompt[2] == 0.3
+    assert rag_prompt[1].startswith("Ты — помощник писателя.")
     meta = next(event for event in events if event["type"] == "meta")
     assert meta["book_id"] == book.id
     assert meta["book_title"] == "Роман"

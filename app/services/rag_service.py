@@ -8,12 +8,12 @@ from dataclasses import dataclass
 
 from app.core.config import settings
 from app.core.prompts import (
+    SYSTEM_PROMPT,
     CHARACTER_CHAPTER_PROMPT,
     CHARACTER_SYSTEM_PROMPT,
     CHECK_AGAINST_RAG_PROMPT,
     CHECK_LOGIC_PROMPT,
     CHECK_RETRY_PROMPT,
-    CHECK_SYSTEM_PROMPT,
     SPLIT_CHAPTER_PROMPT,
     SPLIT_SYSTEM_PROMPT,
 )
@@ -86,8 +86,8 @@ def _ask_about_text(prompt: str, source: str, task: str, context: str) -> str:
     reply = "".join(
         ollama_client.generate_stream(
             prompt,
-            system=CHECK_SYSTEM_PROMPT,
-            temperature=0.2,
+            system=SYSTEM_PROMPT,
+            temperature=0.3,
         )
     )
     if not _reply_skips_text(reply, source):
@@ -96,8 +96,8 @@ def _ask_about_text(prompt: str, source: str, task: str, context: str) -> str:
     return "".join(
         ollama_client.generate_stream(
             _fill(CHECK_RETRY_PROMPT, chapter=source, context=context, task=task),
-            system=CHECK_SYSTEM_PROMPT,
-            temperature=0.2,
+            system=SYSTEM_PROMPT,
+            temperature=0.7,
         )
     )
 
@@ -426,7 +426,7 @@ class RAGService:
                 chapter=text,
             ),
             text,
-            task="Сверь присланный текст с фрагментами базы и назови противоречия.",
+            task="Сравни цитату из присланного текста с цитатой из базы и напиши, про одни ли это события.",
             context=context,
         )
         logger.info("этап: сверка, прислано=%r, ответ=\n%s", _opening(text, 80), rag_reply)
@@ -441,7 +441,7 @@ class RAGService:
         logic_reply = _ask_about_text(
             _fill(CHECK_LOGIC_PROMPT, book=book_title, chapter=text),
             text,
-            task="Проверь внутреннюю логику только присланного текста.",
+            task="По цитатам разбери, кто действует, где находится и что из чего следует.",
             context="База для этой части не нужна.",
         )
         logger.info("этап: логика, прислано=%r, ответ=\n%s", _opening(text, 80), logic_reply)
