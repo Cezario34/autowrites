@@ -60,7 +60,7 @@ def test_check_uses_existing_rag_and_does_not_save(monkeypatch, caplog, book):
 
     def stream(prompt, system=None, temperature=0.3, response_format=None):
         prompts.append((prompt, system, temperature))
-        yield "Часть "
+        yield "Герой вошёл в дом. Часть "
         yield "ответа"
 
     _patch_pipeline(monkeypatch, stream)
@@ -82,8 +82,11 @@ def test_check_uses_existing_rag_and_does_not_save(monkeypatch, caplog, book):
         "Проверяю логику нового отрывка…",
     ]
     answer = "".join(event["text"] for event in events if event["type"] == "token")
-    assert answer.startswith("По уже сохранённому тексту (фрагментов из базы: 1)\n\nЧасть ответа")
-    assert "\n\nЛогика нового отрывка\n\nЧасть ответа" in answer
+    assert answer.startswith(
+        "По уже сохранённому тексту (фрагментов из базы: 1)\n\nГерой вошёл в дом. Часть ответа"
+    )
+    assert "\n\nЛогика нового отрывка\n\nГерой вошёл в дом. Часть ответа" in answer
+    assert "Вы прислали" not in answer
     rag_prompt, logic_prompt = prompts
     assert "ранее" in rag_prompt[0]
     assert "Герой" in rag_prompt[0]
@@ -135,25 +138,28 @@ def test_model_html_error_does_not_reach_the_page(monkeypatch, book):
     assert "<!doctype" not in detail.casefold()
 
 
-def test_check_says_when_the_model_ignores_the_excerpt(monkeypatch, book):
+def test_check_does_not_treat_a_stock_reply_as_analysis(monkeypatch, book):
     def stream(prompt, system=None, temperature=0.3, response_format=None):
-        assert "Герой вошёл в дом." in prompt
+        assert "fsdf" in prompt
         yield "Противоречий нет. Логика держится."
 
     _patch_pipeline(monkeypatch, stream)
     monkeypatch.setattr(
         vector_store,
         "query",
-        lambda *args, **kwargs: {"documents": [["ранее"]]},
+        lambda *args, **kwargs: {"documents": [["ранее сохранённый кусок"]]},
     )
 
     response = client.post(
         "/api/check-chapter",
-        json={"text": "Герой вошёл в дом.", "book_id": book.id},
+        json={"text": "fsdf", "book_id": book.id},
     )
     answer = "".join(event["text"] for event in _events(response) if event["type"] == "token")
-    assert answer.count("Модель не разобрала присланный отрывок") == 2
-    assert "Герой вошёл в дом." in answer
+    assert answer.count("Вы прислали: «fsdf»") == 2
+    assert answer.count("Модель этот текст не разбирала.") == 2
+    assert "[1] ранее сохранённый кусок" in answer
+    assert "фрагментов из базы: 1)\n\nВы прислали: «fsdf»" in answer
+    assert "Логика нового отрывка\n\nВы прислали: «fsdf»" in answer
 
 
 def test_check_searches_the_whole_excerpt_and_skips_character_cards(monkeypatch, book):

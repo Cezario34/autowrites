@@ -18,8 +18,18 @@ class _ChatChunk:
         self.message = _Message(content)
 
 
+def _offline(monkeypatch):
+    ollama_client._reading_model_name = None
+
+    def show(model):
+        raise ResponseError("нет модели", 404)
+
+    monkeypatch.setattr(ollama_client.client, "show", show)
+
+
 def test_generate_sends_the_text_outside_the_model_template(monkeypatch):
     seen = {}
+    _offline(monkeypatch)
 
     def generate(**kwargs):
         seen.update(kwargs)
@@ -46,6 +56,7 @@ def test_generate_sends_the_text_outside_the_model_template(monkeypatch):
 
 def test_generate_falls_back_to_chat_when_generate_route_is_missing(monkeypatch):
     seen = {}
+    _offline(monkeypatch)
 
     def generate(**kwargs):
         raise ResponseError("Nothing matches the given URI.", 404)
