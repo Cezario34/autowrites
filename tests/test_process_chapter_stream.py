@@ -240,6 +240,22 @@ def test_save_reports_unparsed_model_output(monkeypatch, book):
     assert listed.json() == {"characters": []}
 
 
+def test_trailing_slash_still_reaches_save(book):
+    response = client.post(
+        "/api/save-chapter/",
+        json={"text": "   ", "book_id": book.id},
+        follow_redirects=False,
+    )
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Глава пустая"}
+
+
+def test_unknown_api_post_is_not_method_not_allowed():
+    response = client.post("/api/no-such-route", json={})
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Маршрут не найден"}
+
+
 def test_empty_chapter_stays_bad_request(book):
     for path in ("/api/check-chapter", "/api/save-chapter"):
         response = client.post(path, json={"text": "   ", "book_id": book.id})
