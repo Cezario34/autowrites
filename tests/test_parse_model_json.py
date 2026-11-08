@@ -38,8 +38,11 @@ def test_parse_characters_from_object():
     assert [(item.name, item.description) for item in parsed] == [("Анна", "Ждёт.")]
 
 
-def test_plain_prose_is_still_rejected():
-    with pytest.raises(SplitError, match="не список фрагментов"):
+def test_plain_prose_is_still_rejected(caplog):
+    caplog.set_level("ERROR", logger="app")
+    with pytest.raises(SplitError, match="не список фрагментов") as error:
         parse_fragments("Здесь нет JSON, только разбор главы.")
+    assert "Ответ модели:" in str(error.value)
+    assert "Здесь нет JSON, только разбор главы." in caplog.text
     with pytest.raises(CharacterParseError, match="не список персонажей"):
         parse_characters("Анна — главная героиня, но это не JSON.")

@@ -103,9 +103,18 @@ def _strings_from_payload(payload) -> list[str] | None:
             piece = ""
         if piece:
             fragments.append(piece)
-    if not fragments:
-        raise SplitError("Модель не вернула фрагменты")
     return fragments
+
+
+def _explain(title: str, reason: str, raw: str) -> str:
+    logger.error(
+        "этап: %s, причина=%s, символов ответа=%s\n%s",
+        title,
+        reason,
+        len(raw or ""),
+        raw,
+    )
+    return f"{title}\nПричина: {reason}.\nОтвет модели:\n{raw}"
 
 
 def _fragments_from_whole_json(text: str) -> list[str] | None:
@@ -141,8 +150,10 @@ def parse_fragments(raw: str) -> list[str]:
     """Берёт фрагменты, на которые модель разрезала обычный текст."""
     text = _strip_fences(raw).strip()
     whole = _fragments_from_whole_json(text)
-    if whole is not None:
+    if whole:
         return whole
+    if whole == []:
+        raise SplitError(_explain("Модель не вернула фрагменты", "JSON-список пустой", raw))
     marked = _fragments_marked(text)
     if len(marked) >= 2:
         return marked
@@ -155,17 +166,27 @@ def parse_fragments(raw: str) -> list[str]:
     listed = _fragments_from_list_markup(text)
     if len(listed) >= 2:
         return listed
-    raise SplitError("Модель вернула не список фрагментов")
+    raise SplitError(
+        _explain(
+            "Модель вернула не список фрагментов",
+            f"целый JSON не список, частей по --- {len(marked)}, пунктов списка {len(listed)}",
+            raw,
+        )
+    )
 
 
 def parse_characters(raw: str) -> list[Character]:
     try:
         payload = _model_payload(raw)
     except json.JSONDecodeError as exc:
-        raise CharacterParseError("Модель вернула не список персонажей") from exc
+        raise CharacterParseError(
+            _explain("Модель вернула не список персонажей", "в ответе нет JSON", raw)
+        ) from exc
     payload = _payload_list(payload, ("characters", "persons", "items", "result"))
     if not isinstance(payload, list):
-        raise CharacterParseError("Модель вернула не список персонажей")
+        raise CharacterParseError(
+            _explain("Модель вернула не список персонажей", "JSON не список персонажей", raw)
+        )
 
     characters: list[Character] = []
     for item in payload:
@@ -176,7 +197,9 @@ def parse_characters(raw: str) -> list[Character]:
         if name:
             characters.append(Character(name=name, description=description))
     if payload and not characters:
-        raise CharacterParseError("Модель не вернула персонажей")
+        raise CharacterParseError(
+            _explain("Модель не вернула персонажей", "в списке нет имён", raw)
+        )
     return characters
 
 
