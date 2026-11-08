@@ -107,6 +107,34 @@ def test_check_uses_existing_rag_and_does_not_save(monkeypatch, caplog, book):
     assert "этап: запись в базу" not in caplog.text
 
 
+def test_model_html_error_does_not_reach_the_page(monkeypatch, book):
+    def stream(*args, **kwargs):
+        raise RuntimeError(
+            "<!DOCTYPE HTML><html><body><h1>Error response</h1>"
+            "<p>Error code: 404</p> Nothing matches the given URI.</body></html>"
+            " (status code: 404)"
+        )
+        yield ""
+
+    _patch_pipeline(monkeypatch, stream)
+    monkeypatch.setattr(
+        vector_store,
+        "query",
+        lambda *args, **kwargs: {"documents": [[]]},
+    )
+
+    response = client.post(
+        "/api/check-chapter",
+        json={"text": "Герой вошёл в дом.", "book_id": book.id},
+    )
+    events = _events(response)
+    detail = events[-1]["detail"]
+    assert events[-1]["type"] == "error"
+    assert "404" in detail
+    assert "<html" not in detail.casefold()
+    assert "<!doctype" not in detail.casefold()
+
+
 def test_check_searches_the_whole_excerpt_and_skips_character_cards(monkeypatch, book):
     calls = []
 
