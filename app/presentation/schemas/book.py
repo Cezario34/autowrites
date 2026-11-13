@@ -59,3 +59,13 @@ class TextReviewResponse(BaseModel):
 
 class TextFileRequest(BaseModel):
     text: str
+
+
+class SuggestChapterRequest(BaseModel):
+    prompt: str
+    text: str = ""
+
+
+class SuggestChapterResponse(BaseModel):
+    chapter: str
+    model: str

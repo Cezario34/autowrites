@@ -14,6 +14,9 @@ def test_page_saves_text_and_shows_plan_beside_names():
     page = Path("frontend/index.html").read_text(encoding="utf-8")
     assert "Сохранить и дополнить" in page
     assert "Проверить текст" in page
+    assert "Предложить главу" in page
+    assert "/suggest" in page
+    assert "GPT-6.1 Sol" in page
     assert "Проверить по книге" not in page
     assert "Сохранить в базу" not in page
     assert "/api/check-chapter" in page

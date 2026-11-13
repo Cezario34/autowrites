@@ -49,6 +49,16 @@ class VectorStore:
         found = self.collection.get(where=where, include=["metadatas"])
         return len(found.get("ids") or [])
 
+    def documents_where(self, where: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+        found = self.collection.get(where=where, include=["documents", "metadatas"])
+        documents = found.get("documents") or []
+        metadatas = found.get("metadatas") or []
+        rows: list[tuple[str, dict[str, Any]]] = []
+        for index, document in enumerate(documents):
+            meta = metadatas[index] if index < len(metadatas) and metadatas[index] else {}
+            rows.append((document or "", meta))
+        return rows
+
     def query(
         self,
         query_embedding: list[float],
