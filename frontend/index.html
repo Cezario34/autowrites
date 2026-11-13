@@ -300,7 +300,9 @@
       }
 
       function showCharacters(characters) {
-        const names = (characters || []).map((item) => item.name).filter(Boolean);
+        const names = (characters || [])
+          .map((item) => (item.role ? item.name + " — " + item.role : item.name))
+          .filter(Boolean);
         characterPanel.textContent = names.join(", ");
       }
 

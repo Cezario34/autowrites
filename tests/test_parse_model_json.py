@@ -35,7 +35,22 @@ def test_parse_fragments_from_array_inside_text():
 def test_parse_characters_from_object():
     raw = '{"characters": [{"name": "Анна", "description": "Ждёт."}]}'
     parsed = parse_characters(raw)
-    assert [(item.name, item.description) for item in parsed] == [("Анна", "Ждёт.")]
+    assert [(item.name, item.role, item.description) for item in parsed] == [
+        ("Анна", "", "Ждёт.")
+    ]
+
+
+def test_parse_characters_from_russian_shapes():
+    listed = parse_characters(
+        '{"персонажи": [{"имя": "Герта (Грета)", "роль": "старая женщина форта", "описание": "Живёт в форте."}]}'
+    )
+    assert [(item.name, item.role, item.description) for item in listed] == [
+        ("Герта (Грета)", "старая женщина форта", "Живёт в форте.")
+    ]
+    by_name = parse_characters(
+        '{"Ульрик": {"роль": "конунг", "описание": "Правит."}}'
+    )
+    assert [(item.name, item.role) for item in by_name] == [("Ульрик", "конунг")]
 
 
 def test_plain_prose_is_still_rejected(caplog):

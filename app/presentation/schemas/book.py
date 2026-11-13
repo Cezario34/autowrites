@@ -14,7 +14,8 @@ class BookResponse(BaseModel):
 
 class CharacterResponse(BaseModel):
     name: str
-    description: str
+    role: str = ""
+    description: str = ""
 
 
 class CharacterListResponse(BaseModel):

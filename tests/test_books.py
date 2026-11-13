@@ -43,7 +43,7 @@ def test_create_list_and_reject_blank_title(tmp_path, monkeypatch):
         assert (folder / "plan.txt").read_text(encoding="utf-8") == ""
         assert (folder / "text.txt").read_text(encoding="utf-8") == ""
         assert json.loads((folder / "characters.json").read_text(encoding="utf-8")) == {
-            "characters": []
+            "персонажи": []
         }
 
 
@@ -64,12 +64,18 @@ def test_each_book_has_its_own_character_file_and_a_plan(tmp_path, monkeypatch):
     assert (folder / "text.txt").read_text(encoding="utf-8") == ""
     (folder / "characters.json").write_text(
         json.dumps(
-            {
-                "characters": [
-                    {"name": "Ингрид", "description": "Леди."},
-                    {"name": "Ульрик", "description": "Конунг."},
-                ]
-            },
+            [
+                {
+                    "имя": "Ингрид",
+                    "роль": "леди",
+                    "описание": "Хозяйка башни.",
+                },
+                {
+                    "имя": "Ульрик",
+                    "роль": "конунг",
+                    "описание": "",
+                },
+            ],
             ensure_ascii=False,
         ),
         encoding="utf-8",
@@ -82,10 +88,9 @@ def test_each_book_has_its_own_character_file_and_a_plan(tmp_path, monkeypatch):
 
     characters = client.get(f"/api/books/{book_id}/characters")
     assert characters.status_code == 200
-    assert [item["name"] for item in characters.json()["characters"]] == [
-        "Ингрид",
-        "Ульрик",
-    ]
+    assert [
+        (item["name"], item["role"]) for item in characters.json()["characters"]
+    ] == [("Ингрид", "леди"), ("Ульрик", "конунг")]
     assert client.get(f"/api/books/{other.json()['id']}/characters").json() == {
         "characters": []
     }
@@ -96,7 +101,7 @@ def test_each_book_has_its_own_character_file_and_a_plan(tmp_path, monkeypatch):
     assert (other_folder / "plan.txt").read_text(encoding="utf-8") == ""
     assert (other_folder / "text.txt").read_text(encoding="utf-8") == ""
     assert json.loads((other_folder / "characters.json").read_text(encoding="utf-8")) == {
-        "characters": []
+        "персонажи": []
     }
 
 

@@ -62,7 +62,11 @@ async def list_characters_endpoint(book_id: str):
         raise HTTPException(status_code=400, detail="Книга не найдена") from None
     return CharacterListResponse(
         characters=[
-            CharacterResponse(name=character.name, description=character.description)
+            CharacterResponse(
+                name=character.name,
+                role=character.role,
+                description=character.description,
+            )
             for character in characters
         ]
     )
