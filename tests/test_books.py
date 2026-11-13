@@ -110,22 +110,46 @@ def test_each_book_has_its_own_character_file_and_a_plan(tmp_path, monkeypatch):
     }
 
 
-def test_save_as_text_writes_the_whole_chapter(tmp_path, monkeypatch):
+def test_save_as_text_writes_the_next_chapter(tmp_path, monkeypatch):
+    from urllib.parse import unquote
+
     _isolate_book_files(tmp_path, monkeypatch)
+    fresh = client.post("/api/books", json={"title": "Юг"})
+    fresh_id = fresh.json()["id"]
+    south = tmp_path / "books" / "Юг"
+    first = client.post(f"/api/books/{fresh_id}/text", json={"text": "Начало."})
+    second = client.post(f"/api/books/{fresh_id}/text", json={"text": "Продолжение."})
+    assert unquote(first.headers["content-disposition"].split("filename*=UTF-8''", 1)[1]) == "глава 1.txt"
+    assert unquote(second.headers["content-disposition"].split("filename*=UTF-8''", 1)[1]) == "глава 2.txt"
+    assert (south / "глава 1.txt").read_text(encoding="utf-8") == "Начало."
+    assert (south / "глава 2.txt").read_text(encoding="utf-8") == "Продолжение."
+
     created = client.post("/api/books", json={"title": "Север: быт"})
     book_id = created.json()["id"]
+    folder = tmp_path / "books" / "Север быт"
+    (folder / "глава 2.txt").write_text("уже лежит", encoding="utf-8")
     chapter = "Первая строка.\n\nВторая строка."
 
     saved = client.post(f"/api/books/{book_id}/text", json={"text": chapter})
     assert saved.status_code == 200
     assert saved.text == chapter
     assert saved.headers["content-type"].startswith("text/plain")
-    assert "filename*=UTF-8''" in saved.headers["content-disposition"]
-    assert (tmp_path / "books" / "Север быт" / "text.txt").read_text(encoding="utf-8") == chapter
+    disposition = saved.headers["content-disposition"]
+    assert unquote(disposition.split("filename*=UTF-8''", 1)[1]) == "глава 3.txt"
+    assert (folder / "глава 3.txt").read_text(encoding="utf-8") == chapter
+    assert (folder / "глава 2.txt").read_text(encoding="utf-8") == "уже лежит"
+    assert not (folder / "глава 1.txt").exists()
+
+    again = client.post(f"/api/books/{book_id}/text", json={"text": "Следующая глава."})
+    assert again.status_code == 200
+    assert unquote(again.headers["content-disposition"].split("filename*=UTF-8''", 1)[1]) == "глава 4.txt"
+    assert (folder / "глава 4.txt").read_text(encoding="utf-8") == "Следующая глава."
+    assert (folder / "глава 3.txt").read_text(encoding="utf-8") == chapter
 
     empty = client.post(f"/api/books/{book_id}/text", json={"text": "   "})
     assert empty.status_code == 400
     assert empty.json() == {"detail": "Глава пустая"}
+    assert not (folder / "глава 5.txt").exists()
 
 
 def test_unknown_book_is_rejected_before_generation(tmp_path, monkeypatch):

@@ -82,21 +82,15 @@ async def read_plan_endpoint(book_id: str):
     return PlanResponse(text=text)
 
 
-def _text_filename(title: str) -> str:
-    cleaned = "".join(char if char not in '\\/:*?"<>|' else " " for char in title)
-    cleaned = " ".join(cleaned.split()) or "текст"
-    return f"{cleaned}.txt"
-
-
 @router.post("/api/books/{book_id}/text")
 async def save_text_endpoint(book_id: str, request: TextFileRequest):
     try:
-        book, text = save_chapter_text(book_id, request.text)
+        _book, text, filename = save_chapter_text(book_id, request.text)
     except UnknownBookError:
         raise HTTPException(status_code=400, detail="Книга не найдена") from None
     except EmptyChapterError:
         raise HTTPException(status_code=400, detail="Глава пустая") from None
-    filename = quote(_text_filename(book.title))
+    filename = quote(filename)
     return Response(
         content=text,
         media_type="text/plain; charset=utf-8",

@@ -1,7 +1,7 @@
 import logging
 from dataclasses import dataclass
 
-from app.infrastructure.book_files import PLAN_FILE, TEXT_FILE, library
+from app.infrastructure.book_files import PLAN_FILE, library
 from app.infrastructure.books import Book, book_store
 from app.infrastructure.characters import Character, character_store
 from app.infrastructure.vector_store import vector_store
@@ -74,14 +74,19 @@ def read_plan(book_id: str) -> str:
     return library.read(book_id, PLAN_FILE)
 
 
-def save_chapter_text(book_id: str, text: str) -> tuple[Book, str]:
-    """Кладёт весь присланный текст в обычный txt этой книги."""
+def save_chapter_text(book_id: str, text: str) -> tuple[Book, str, str]:
+    """Кладёт главу в следующий файл: глава 1.txt, глава 2.txt и дальше."""
     book = require_book(book_id)
     if not text.strip():
         raise EmptyChapterError
-    library.write(book_id, TEXT_FILE, text)
-    logger.info("текст книги сохранён: %s, символов=%s", book.title, len(text))
-    return book, text
+    path = library.write_next_chapter(book_id, text)
+    logger.info(
+        "глава сохранена: %s, файл=%s, символов=%s",
+        book.title,
+        path.name,
+        len(text),
+    )
+    return book, text, path.name
 
 
 def require_book(book_id: str) -> Book:
