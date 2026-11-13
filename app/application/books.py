@@ -7,7 +7,8 @@ from app.core.prompts import (
     PLOT_SUPPLEMENT_SYSTEM_PROMPT,
     REVIEW_SYSTEM_PROMPT,
     SUGGEST_CHAPTER_SYSTEM_PROMPT,
-    SUGGESTED_CHAPTER_LIMIT,
+    SUGGESTED_CHAPTER_MAX,
+    SUGGESTED_CHAPTER_MIN,
     SUPPLEMENT_SYSTEM_PROMPT,
 )
 from app.infrastructure.book_files import CHARACTERS_FILE, PLAN_FILE, PLOT_FILE, library
@@ -263,16 +264,20 @@ def _section(title: str, body: str) -> str:
     return f"{title}:\n{body.strip() or '—'}"
 
 
-def limit_chapter(text: str, limit: int = SUGGESTED_CHAPTER_LIMIT) -> str:
-    """Обрезает главу до лимита, по возможности на конце предложения."""
+def limit_chapter(text: str) -> str:
+    """Оставляет главу длиннее 5000 и короче 10000 символов."""
     chapter = text.strip()
-    if len(chapter) <= limit:
+    if len(chapter) < SUGGESTED_CHAPTER_MAX:
         return chapter
-    window = chapter[:limit]
+    window = chapter[: SUGGESTED_CHAPTER_MAX - 1]
     cut = max(window.rfind(mark) for mark in (".", "!", "?", "…", "\n"))
-    if cut >= limit * 3 // 4:
+    if cut >= SUGGESTED_CHAPTER_MIN:
         return window[: cut + 1].strip()
     return window.rstrip()
+
+
+def _chapter_fits(text: str) -> bool:
+    return SUGGESTED_CHAPTER_MIN < len(text) < SUGGESTED_CHAPTER_MAX
 
 
 def suggest_chapter(book_id: str, direction: str, draft: str = "") -> tuple[str, str]:
@@ -309,18 +314,35 @@ def suggest_chapter(book_id: str, direction: str, draft: str = "") -> tuple[str,
         len(fragments),
         model,
     )
-    chapter = limit_chapter(
-        openai_client.complete(
-            SUGGEST_CHAPTER_SYSTEM_PROMPT,
-            user,
-            temperature=None,
-            model=model,
+    chapter = ""
+    for attempt in range(3):
+        request = user
+        if chapter:
+            request = (
+                f"{user}\n\n"
+                f"{_section('Уже предложенный текст, верни главу целиком и допиши её', chapter)}\n\n"
+                f"Сейчас в тексте {len(chapter)} символов. "
+                f"Нужно больше {SUGGESTED_CHAPTER_MIN} и меньше {SUGGESTED_CHAPTER_MAX}."
+            )
+        chapter = limit_chapter(
+            openai_client.complete(
+                SUGGEST_CHAPTER_SYSTEM_PROMPT,
+                request,
+                temperature=None,
+                model=model,
+            )
         )
+        if _chapter_fits(chapter):
+            logger.info("этап: глава предложена, символов=%s", len(chapter))
+            return chapter, model
+        logger.info(
+            "этап: глава не той длины, символов=%s, попытка=%s",
+            len(chapter),
+            attempt + 1,
+        )
+    raise OpenAIRequestError(
+        "Модель не уложилась в длину: нужно больше 5000 и меньше 10000 символов"
     )
-    if not chapter:
-        raise OpenAIRequestError("Модель не прислала главу")
-    logger.info("этап: глава предложена, символов=%s", len(chapter))
-    return chapter, model
 
 
 def save_chapter_text(book_id: str, text: str) -> tuple[Book, str, str]:

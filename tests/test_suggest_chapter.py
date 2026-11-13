@@ -88,7 +88,7 @@ def test_suggest_sends_all_fragments_examples_and_sol_model(tmp_path, monkeypatc
         seen["json_mode"] = json_mode
         seen["temperature"] = temperature
         seen["model"] = model
-        return "Марта открыла дверь башни."
+        return ("Марта открыла дверь башни. " * 250).strip()
 
     monkeypatch.setattr(openai_client, "complete", complete)
     response = client.post(
@@ -96,7 +96,8 @@ def test_suggest_sends_all_fragments_examples_and_sol_model(tmp_path, monkeypatc
         json={"prompt": "Ульрика остаётся в башне на ночь", "text": "Она стояла у порога."},
     )
     assert response.status_code == 200
-    assert response.json()["chapter"] == "Марта открыла дверь башни."
+    assert response.json()["chapter"].startswith("Марта открыла дверь башни.")
+    assert 5000 < len(response.json()["chapter"]) < 10000
     assert response.json()["model"] == "gpt-5.6"
     assert seen["model"] == "gpt-5.6"
     assert seen["temperature"] is None
@@ -113,16 +114,17 @@ def test_suggest_sends_all_fragments_examples_and_sol_model(tmp_path, monkeypatc
     assert "Ветер нёс соль по камням." in seen["user"]
     assert "только текст главы" in seen["system"]
     assert "5000" in seen["system"]
+    assert "10000" in seen["system"]
 
 
-def test_suggested_chapter_is_cut_to_five_thousand_characters(tmp_path, monkeypatch):
+def test_suggested_chapter_is_cut_below_ten_thousand_characters(tmp_path, monkeypatch):
     _isolate(tmp_path, monkeypatch)
     created = client.post("/api/books", json={"title": "Север"})
     book_id = created.json()["id"]
     monkeypatch.setattr(rag_service, "all_fragments", lambda book_id: [])
 
     def complete(system, user, *, json_mode=False, temperature=0.2, model=None):
-        return ("Ульрика шла по двору. " * 400).strip()
+        return ("Ульрика шла по двору. " * 500).strip()
 
     monkeypatch.setattr(openai_client, "complete", complete)
     response = client.post(
@@ -131,9 +133,38 @@ def test_suggested_chapter_is_cut_to_five_thousand_characters(tmp_path, monkeypa
     )
     assert response.status_code == 200
     chapter = response.json()["chapter"]
-    assert len(chapter) <= 5000
+    assert 5000 < len(chapter) < 10000
     assert chapter.endswith(".")
     assert response.json()["model"] == "gpt-5.6"
+
+
+def test_short_chapter_is_requested_again(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    created = client.post("/api/books", json={"title": "Запад"})
+    book_id = created.json()["id"]
+    monkeypatch.setattr(rag_service, "all_fragments", lambda book_id: [])
+    longer = ("Марта открыла дверь башни. " * 250).strip()
+    seen = {"calls": 0, "second": ""}
+
+    def complete(system, user, *, json_mode=False, temperature=0.2, model=None):
+        seen["calls"] += 1
+        seen["model"] = model
+        if seen["calls"] == 1:
+            return "Коротко."
+        seen["second"] = user
+        return longer
+
+    monkeypatch.setattr(openai_client, "complete", complete)
+    response = client.post(
+        f"/api/books/{book_id}/suggest",
+        json={"prompt": "Оставить её в башне"},
+    )
+    assert response.status_code == 200
+    assert response.json()["chapter"] == longer
+    assert seen["calls"] == 2
+    assert seen["model"] == "gpt-5.6"
+    assert "Коротко." in seen["second"]
+    assert "больше 5000" in seen["second"]
 
 
 def test_empty_direction_does_not_call_openai(tmp_path, monkeypatch):
