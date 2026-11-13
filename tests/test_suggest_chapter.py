@@ -113,6 +113,7 @@ def test_suggest_sends_all_fragments_examples_and_sol_model(tmp_path, monkeypatc
     assert "— Куда ты?" in seen["user"]
     assert "Ветер нёс соль по камням." in seen["user"]
     assert "только текст главы" in seen["system"]
+    assert "более эмоциональными и развёрнутыми" in seen["system"]
     assert "5000" in seen["system"]
     assert "10000" in seen["system"]
 
