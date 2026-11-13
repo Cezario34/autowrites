@@ -1,6 +1,9 @@
 import json
+import logging
 import threading
 from dataclasses import dataclass
+
+logger = logging.getLogger("app.characters")
 
 from app.infrastructure.book_files import CHARACTERS_FILE, library
 
@@ -260,6 +263,35 @@ def merge_same_person(
     return ordered, absorbed
 
 
+def _keep_written_text(
+    current: Character,
+    incoming: Character,
+    restored: list[str],
+) -> Character:
+    """Новый факт оставляем, только если старый текст в нём цел. Иначе возвращаем старое поле."""
+    role = incoming.role
+    description = incoming.description
+    appearance = incoming.appearance
+    rewritten: list[str] = []
+    if not _keeps_text(current.role, incoming.role):
+        role = current.role
+        rewritten.append("роль")
+    if not _keeps_text(current.description, incoming.description):
+        description = current.description
+        rewritten.append("описание")
+    if not _keeps_text(current.appearance, incoming.appearance):
+        appearance = current.appearance
+        rewritten.append("внешность")
+    if rewritten:
+        restored.append(f"У «{current.name}» оставлено прежнее: {', '.join(rewritten)}.")
+    return Character(
+        name=current.name,
+        role=role,
+        description=description,
+        appearance=appearance,
+    )
+
+
 def supplement_decision(
     existing: list[Character],
     proposed: list[Character],
@@ -295,6 +327,7 @@ def supplement_decision(
         else:
             ordered[slot] = character
     problems: list[str] = []
+    restored: list[str] = []
     for key, current in existing_by.items():
         if key in absorbed:
             continue
@@ -305,21 +338,11 @@ def supplement_decision(
             continue
         if key in targets:
             continue
-        rewritten = [
-            label
-            for label, kept in (
-                ("роль", _keeps_text(current.role, incoming.role)),
-                ("описание", _keeps_text(current.description, incoming.description)),
-                ("внешность", _keeps_text(current.appearance, incoming.appearance)),
-            )
-            if not kept
-        ]
-        if rewritten:
-            problems.append(
-                f"У «{current.name}» переписаны {', '.join(rewritten)}."
-            )
+        ordered[slot] = _keep_written_text(current, incoming, restored)
     if problems:
         return "lost", existing, " ".join(problems)
+    if restored:
+        logger.info("этап: защита карточек, %s", " ".join(restored))
     added = bool(absorbed) or any(key not in existing_by for key in proposed_by)
     if not added:
         added = any(
