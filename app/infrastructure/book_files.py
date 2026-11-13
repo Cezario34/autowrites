@@ -6,7 +6,7 @@ from app.infrastructure.books import default_books_path
 CHARACTERS_FILE = "characters.json"
 PLAN_FILE = "plan.txt"
 TEXT_FILE = "text.txt"
-EMPTY_CHARACTERS = '{\n  "characters": []\n}\n'
+EMPTY_CHARACTERS = '{\n  "персонажи": []\n}\n'
 
 
 def default_library_dir() -> Path:

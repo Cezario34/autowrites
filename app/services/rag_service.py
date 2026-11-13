@@ -20,6 +20,8 @@ from app.core.prompts import (
 from app.infrastructure.characters import (
     Character,
     character_store,
+    characters_from_payload,
+    is_empty_character_payload,
     merge_characters,
 )
 from app.infrastructure.ollama import ollama_client
@@ -270,31 +272,21 @@ def parse_characters(raw: str) -> list[Character]:
         raise CharacterParseError(
             _explain("Модель вернула не список персонажей", "в ответе нет JSON", raw)
         ) from exc
-    payload = _payload_list(payload, ("characters", "persons", "items", "result"))
-    if not isinstance(payload, list):
-        raise CharacterParseError(
-            _explain("Модель вернула не список персонажей", "JSON не список персонажей", raw)
-        )
-
-    characters: list[Character] = []
-    for item in payload:
-        if not isinstance(item, dict):
-            continue
-        name = str(item.get("name") or "").strip()
-        description = str(item.get("description") or "").strip()
-        if name:
-            characters.append(Character(name=name, description=description))
-    if payload and not characters:
-        raise CharacterParseError(
-            _explain("Модель не вернула персонажей", "в списке нет имён", raw)
-        )
-    return characters
+    characters = characters_from_payload(payload)
+    if characters or is_empty_character_payload(payload):
+        return characters
+    raise CharacterParseError(
+        _explain("Модель вернула не список персонажей", "JSON не список персонажей", raw)
+    )
 
 
 def character_document(character: Character) -> str:
+    lines = [f"Персонаж: {character.name}"]
+    if character.role:
+        lines.append(character.role)
     if character.description:
-        return f"Персонаж: {character.name}\n{character.description}"
-    return f"Персонаж: {character.name}"
+        lines.append(character.description)
+    return "\n".join(lines)
 
 
 def character_vector_id(book_id: str, name: str) -> str:
@@ -563,7 +555,11 @@ class RAGService:
             "fragments": fragments,
             "chunks_added": chunks_added,
             "characters": [
-                {"name": character.name, "description": character.description}
+                {
+                    "name": character.name,
+                    "role": character.role,
+                    "description": character.description,
+                }
                 for character in characters
             ],
             "original_length": len(text),

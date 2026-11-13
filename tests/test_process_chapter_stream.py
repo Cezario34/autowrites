@@ -234,7 +234,7 @@ def _save_reply(prompt, system=None, temperature=0.3, people=None):
     return '["Герой вошёл в дом.", "Он закрыл дверь."]'
 
 
-def test_save_stores_fragments_and_character_cards(monkeypatch, caplog, book):
+def test_save_stores_fragments_and_character_cards(monkeypatch, caplog, book, tmp_path):
     saved = {"adds": [], "upserts": [], "systems": []}
 
     def add(**kwargs):
@@ -284,7 +284,11 @@ def test_save_stores_fragments_and_character_cards(monkeypatch, caplog, book):
     assert stored["fragments"] == ["Герой вошёл в дом.", "Он закрыл дверь."]
     assert stored["chunks_added"] == 2
     assert stored["characters"] == [
-        {"name": "Герой", "description": "Вошёл в дом и закрыл дверь."}
+        {
+            "name": "Герой",
+            "role": "",
+            "description": "Вошёл в дом и закрыл дверь.",
+        }
     ]
     assert saved["adds"][0]["documents"] == stored["fragments"]
     assert [item["kind"] for item in saved["adds"][0]["metadatas"]] == [
@@ -302,6 +306,11 @@ def test_save_stores_fragments_and_character_cards(monkeypatch, caplog, book):
     listed = client.get(f"/api/books/{book.id}/characters")
     assert listed.status_code == 200
     assert listed.json() == {"characters": stored["characters"]}
+    written = json.loads(
+        (tmp_path / "books" / "Роман" / "characters.json").read_text(encoding="utf-8")
+    )
+    assert written["персонажи"][0]["имя"] == "Герой"
+    assert (tmp_path / "books" / "Роман" / "plan.txt").read_text(encoding="utf-8") == ""
     assert "этап: персонажи" in caplog.text
 
 
@@ -335,6 +344,7 @@ def test_second_save_merges_character_json_and_database(monkeypatch, book):
     assert stored["characters"] == [
         {
             "name": "Герой",
+            "role": "",
             "description": "Вошёл в дом и закрыл дверь. Ждёт утра.",
         }
     ]
