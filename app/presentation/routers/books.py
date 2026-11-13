@@ -66,6 +66,7 @@ async def list_characters_endpoint(book_id: str):
                 name=character.name,
                 role=character.role,
                 description=character.description,
+                appearance=character.appearance,
             )
             for character in characters
         ]

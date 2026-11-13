@@ -74,6 +74,7 @@ def test_each_book_has_its_own_character_file_and_a_plan(tmp_path, monkeypatch):
                     "имя": "Ульрик",
                     "роль": "конунг",
                     "описание": "",
+                    "внешность": "Широкоплечий, в тяжёлых мехах.",
                 },
             ],
             ensure_ascii=False,
@@ -89,8 +90,12 @@ def test_each_book_has_its_own_character_file_and_a_plan(tmp_path, monkeypatch):
     characters = client.get(f"/api/books/{book_id}/characters")
     assert characters.status_code == 200
     assert [
-        (item["name"], item["role"]) for item in characters.json()["characters"]
-    ] == [("Ингрид", "леди"), ("Ульрик", "конунг")]
+        (item["name"], item["role"], item["appearance"])
+        for item in characters.json()["characters"]
+    ] == [
+        ("Ингрид", "леди", ""),
+        ("Ульрик", "конунг", "Широкоплечий, в тяжёлых мехах."),
+    ]
     assert client.get(f"/api/books/{other.json()['id']}/characters").json() == {
         "characters": []
     }

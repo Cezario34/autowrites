@@ -288,6 +288,7 @@ def test_save_stores_fragments_and_character_cards(monkeypatch, caplog, book, tm
             "name": "Герой",
             "role": "",
             "description": "Вошёл в дом и закрыл дверь.",
+            "appearance": "",
         }
     ]
     assert saved["adds"][0]["documents"] == stored["fragments"]
@@ -335,7 +336,13 @@ def test_second_save_merges_character_json_and_database(monkeypatch, book):
         "/api/save-chapter",
         json={"text": "Герой вошёл в дом.", "book_id": book.id},
     )
-    calls["people"] = [{"name": "герой", "description": "Ждёт утра."}]
+    calls["people"] = [
+        {
+            "name": "герой",
+            "description": "Ждёт утра.",
+            "appearance": "В потёртом плаще.",
+        }
+    ]
     response = client.post(
         "/api/save-chapter",
         json={"text": "Герой вошёл в дом.", "book_id": book.id},
@@ -346,10 +353,11 @@ def test_second_save_merges_character_json_and_database(monkeypatch, book):
             "name": "Герой",
             "role": "",
             "description": "Вошёл в дом и закрыл дверь. Ждёт утра.",
+            "appearance": "В потёртом плаще.",
         }
     ]
     assert list(cards.values()) == [
-        "Персонаж: Герой\nВошёл в дом и закрыл дверь. Ждёт утра."
+        "Персонаж: Герой\nВошёл в дом и закрыл дверь. Ждёт утра.\nВнешность: В потёртом плаще."
     ]
     assert len(cards) == 1
 

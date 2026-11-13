@@ -1,5 +1,6 @@
 import pytest
 
+from app.infrastructure.characters import Character, merge_characters
 from app.services.rag_service import (
     CharacterParseError,
     SplitError,
@@ -51,6 +52,32 @@ def test_parse_characters_from_russian_shapes():
         '{"Ульрик": {"роль": "конунг", "описание": "Правит."}}'
     )
     assert [(item.name, item.role) for item in by_name] == [("Ульрик", "конунг")]
+    with_looks = parse_characters(
+        '{"персонажи": [{"имя": "Ульф", "роль": "лесной охотник", '
+        '"описание": "Проводник.", "внешность": "Высокий, с тёмной бородой."}]}'
+    )
+    assert [
+        (item.name, item.role, item.description, item.appearance)
+        for item in with_looks
+    ] == [("Ульф", "лесной охотник", "Проводник.", "Высокий, с тёмной бородой.")]
+
+
+def test_merge_keeps_written_appearance_when_the_new_card_omits_it():
+    kept = merge_characters(
+        [
+            Character(
+                name="Ульф",
+                role="лесной охотник",
+                description="Проводник.",
+                appearance="Высокий, с тёмной бородой.",
+            )
+        ],
+        [Character(name="ульф", description="Честный и прямой.")],
+    )
+    assert len(kept) == 1
+    assert kept[0].appearance == "Высокий, с тёмной бородой."
+    assert kept[0].description == "Проводник. Честный и прямой."
+    assert kept[0].role == "лесной охотник"
 
 
 def test_plain_prose_is_still_rejected(caplog):

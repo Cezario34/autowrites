@@ -10,12 +10,14 @@ class Character:
     name: str
     role: str = ""
     description: str = ""
+    appearance: str = ""
 
 
 _LIST_KEYS = ("персонажи", "characters", "persons", "items", "result")
 _NAME_KEYS = ("имя", "name")
 _ROLE_KEYS = ("роль", "role")
 _DESCRIPTION_KEYS = ("описание", "description")
+_APPEARANCE_KEYS = ("внешность", "appearance")
 
 
 def _field(item: dict, keys: tuple[str, ...]) -> str:
@@ -39,6 +41,7 @@ def character_from_item(item: dict, fallback_name: str = "") -> Character | None
         name=name,
         role=_field(item, _ROLE_KEYS),
         description=_field(item, _DESCRIPTION_KEYS),
+        appearance=_field(item, _APPEARANCE_KEYS),
     )
 
 
@@ -92,7 +95,15 @@ def character_record(character: Character) -> dict[str, str]:
         "имя": character.name,
         "роль": character.role,
         "описание": character.description,
+        "внешность": character.appearance,
     }
+
+
+def _append_fact(current: str, incoming: str) -> str:
+    extra = incoming.strip()
+    if extra and extra not in current:
+        return f"{current} {extra}".strip()
+    return current
 
 
 def merge_characters(
@@ -112,15 +123,18 @@ def merge_characters(
             continue
         current = ordered[index[key]]
         role = current.role.strip() or character.role.strip()
-        description = current.description
-        extra = character.description.strip()
-        if extra and extra not in description:
-            description = f"{description} {extra}".strip()
-        if role != current.role or description != current.description:
+        description = _append_fact(current.description, character.description)
+        appearance = _append_fact(current.appearance, character.appearance)
+        if (
+            role != current.role
+            or description != current.description
+            or appearance != current.appearance
+        ):
             ordered[index[key]] = Character(
                 name=current.name,
                 role=role,
                 description=description,
+                appearance=appearance,
             )
     return ordered
 
