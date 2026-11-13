@@ -45,6 +45,10 @@ class BookSupplementResponse(BaseModel):
     characters: list[CharacterResponse]
 
 
+class PlotResponse(BaseModel):
+    chapters: list[PlotChapterResponse]
+
+
 class PlanResponse(BaseModel):
     text: str
 

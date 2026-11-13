@@ -48,7 +48,8 @@
       }
 
       #plan,
-      #characters {
+      #characters,
+      #plot {
         margin: 0;
         max-height: 70vh;
         overflow: auto;
@@ -59,8 +60,34 @@
       }
 
       #plan {
+        max-height: 28vh;
         white-space: pre-wrap;
         font: 0.95rem/1.45 "Iowan Old Style", Palatino, Georgia, serif;
+      }
+
+      #show-plot {
+        width: 100%;
+        margin-top: 0.75rem;
+      }
+
+      #plot {
+        max-height: 36vh;
+        margin-top: 0.6rem;
+      }
+
+      #plot h3 {
+        margin: 0.9rem 0 0.15rem;
+        font-size: 1rem;
+        font-weight: 600;
+      }
+
+      #plot article:first-child h3 {
+        margin-top: 0;
+      }
+
+      #plot p {
+        margin: 0;
+        white-space: pre-wrap;
       }
 
       #characters {
@@ -244,6 +271,8 @@
     <aside>
       <h2>План</h2>
       <pre id="plan"></pre>
+      <button id="show-plot" class="secondary" type="button">Вывести сюжет</button>
+      <div id="plot" hidden></div>
     </aside>
     <main>
       <h1>Автописатель</h1>
@@ -303,6 +332,8 @@
       const answer = document.querySelector("#answer");
       const characterPanel = document.querySelector("#characters");
       const planPanel = document.querySelector("#plan");
+      const showPlotButton = document.querySelector("#show-plot");
+      const plotPanel = document.querySelector("#plot");
 
       function symbolWord(count) {
         const mod100 = count % 100;
@@ -404,6 +435,42 @@
         planPanel.textContent = value || "";
       }
 
+      function showPlot(chapters) {
+        plotPanel.replaceChildren();
+        plotPanel.hidden = false;
+        const ordered = chapters.slice().sort((left, right) => Number(left.number) - Number(right.number));
+        if (!ordered.length) {
+          const empty = document.createElement("p");
+          empty.textContent = "Сюжета пока нет";
+          plotPanel.append(empty);
+          return;
+        }
+        for (const chapter of ordered) {
+          const block = document.createElement("article");
+          const title = document.createElement("h3");
+          title.textContent = "Глава " + chapter.number;
+          const description = document.createElement("p");
+          description.textContent = chapter.description || "";
+          block.append(title, description);
+          plotPanel.append(block);
+        }
+      }
+
+      async function loadPlot() {
+        if (!bookSelect.value) {
+          showStatus("Сначала создайте или выберите книгу");
+          return;
+        }
+        const response = await fetch(
+          "/api/books/" + encodeURIComponent(bookSelect.value) + "/plot"
+        );
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload.detail || "Не удалось загрузить сюжет");
+        }
+        showPlot(payload.chapters || []);
+      }
+
       async function loadPlan() {
         if (!bookSelect.value) {
           showPlan("");
@@ -485,6 +552,9 @@
             throw new Error(payload.detail || "Не удалось дополнить книгу");
           }
           showCharacters(payload.characters);
+          if (!plotPanel.hidden) {
+            showPlot(payload.plot || []);
+          }
           progress.hidden = true;
           const numbers = (payload.chapters || []).map((item) => item.number).join(", ");
           const plotUpdated = (payload.chapters || []).some((item) => item.plot_updated);
@@ -626,11 +696,19 @@
       }
 
       bookSelect.addEventListener("change", () => {
+        plotPanel.hidden = true;
+        plotPanel.replaceChildren();
         loadCharacters().catch((error) => {
           showStatus(error.message || "Не удалось загрузить персонажей");
         });
         loadPlan().catch((error) => {
           showStatus(error.message || "Не удалось загрузить план");
+        });
+      });
+
+      showPlotButton.addEventListener("click", () => {
+        loadPlot().catch((error) => {
+          showStatus(error.message || "Не удалось загрузить сюжет");
         });
       });
 

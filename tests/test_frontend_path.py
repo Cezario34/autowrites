@@ -18,6 +18,8 @@ def test_page_saves_text_and_shows_plan_beside_names():
     assert "глава 1" in page
     assert "глава 2" in page
     assert "<h2>План</h2>" in page
+    assert "Вывести сюжет" in page
+    assert 'title.textContent = "Глава "' in page
     assert 'document.createElement("details")' in page
     assert 'document.createElement("summary")' in page
     assert "item.appearance" in page

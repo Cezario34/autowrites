@@ -113,6 +113,11 @@ def read_plan(book_id: str) -> str:
     return library.read(book_id, PLAN_FILE)
 
 
+def read_plot(book_id: str) -> list[PlotChapter]:
+    require_book(book_id)
+    return sorted(plot_store.list_for_book(book_id), key=lambda chapter: int(chapter.number))
+
+
 def supplement_plot(
     book_id: str,
     number: str,
