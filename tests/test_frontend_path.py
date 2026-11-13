@@ -16,7 +16,9 @@ def test_page_saves_text_and_shows_plan_beside_names():
     assert "Проверить текст" in page
     assert "Предложить главу" in page
     assert "/suggest" in page
-    assert "GPT-6.1 Sol" in page
+    assert "GPT-5.6" in page
+    assert "длиннее 5 000 и короче 10 000 символов" in page
+    assert "GPT-6.1 Sol" not in page
     assert "Проверить по книге" not in page
     assert "Сохранить в базу" not in page
     assert "/api/check-chapter" in page
