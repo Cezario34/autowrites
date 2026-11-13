@@ -16,6 +16,7 @@ class CharacterResponse(BaseModel):
     name: str
     role: str = ""
     description: str = ""
+    appearance: str = ""
 
 
 class CharacterListResponse(BaseModel):

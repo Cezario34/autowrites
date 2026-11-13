@@ -102,6 +102,20 @@
         color: #3c362e;
       }
 
+      #characters .about + .about {
+        padding-top: 0.15rem;
+      }
+
+      #characters .kind {
+        display: block;
+        margin-bottom: 0.15rem;
+        color: #8a8175;
+        font-size: 0.78rem;
+        font-weight: 600;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+      }
+
       @media (max-width: 860px) {
         .workspace {
           flex-direction: column;
@@ -346,13 +360,24 @@
           person.className = "person";
           const name = document.createElement("summary");
           name.textContent = item.name;
-          const about = document.createElement("p");
-          about.className = "about";
-          const parts = [];
-          if (item.role) parts.push(item.role);
-          if (item.description) parts.push(item.description);
-          about.textContent = parts.join("\n\n") || "Описания нет";
-          person.append(name, about);
+          const blocks = [];
+          if (item.role) blocks.push({ label: "", text: item.role });
+          if (item.description) blocks.push({ label: "", text: item.description });
+          if (item.appearance) blocks.push({ label: "Внешность", text: item.appearance });
+          if (!blocks.length) blocks.push({ label: "", text: "Описания нет" });
+          person.append(name);
+          for (const block of blocks) {
+            const about = document.createElement("p");
+            about.className = "about";
+            if (block.label) {
+              const kind = document.createElement("span");
+              kind.className = "kind";
+              kind.textContent = block.label;
+              about.append(kind);
+            }
+            about.append(document.createTextNode(block.text));
+            person.append(about);
+          }
           characterPanel.append(person);
         }
       }

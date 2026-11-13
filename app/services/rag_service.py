@@ -286,6 +286,8 @@ def character_document(character: Character) -> str:
         lines.append(character.role)
     if character.description:
         lines.append(character.description)
+    if character.appearance:
+        lines.append(f"Внешность: {character.appearance}")
     return "\n".join(lines)
 
 
@@ -559,6 +561,7 @@ class RAGService:
                     "name": character.name,
                     "role": character.role,
                     "description": character.description,
+                    "appearance": character.appearance,
                 }
                 for character in characters
             ],
