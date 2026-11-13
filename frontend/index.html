@@ -37,6 +37,10 @@
         top: 1rem;
       }
 
+      aside.people {
+        flex-basis: 22rem;
+      }
+
       aside h2 {
         margin: 0 0 0.6rem;
         font-size: 1.05rem;
@@ -60,7 +64,42 @@
       }
 
       #characters {
-        white-space: normal;
+        padding: 0.25rem 0;
+      }
+
+      #characters .person {
+        border-top: 1px solid #ece7de;
+      }
+
+      #characters .person:first-child {
+        border-top: 0;
+      }
+
+      #characters summary {
+        cursor: pointer;
+        padding: 0.45rem 0.75rem;
+        font-weight: 600;
+        list-style: none;
+      }
+
+      #characters summary::-webkit-details-marker {
+        display: none;
+      }
+
+      #characters summary::before {
+        content: "▸ ";
+        color: #8a8175;
+      }
+
+      #characters .person[open] summary::before {
+        content: "▾ ";
+      }
+
+      #characters .about {
+        margin: 0;
+        padding: 0 0.75rem 0.7rem 1.6rem;
+        white-space: pre-wrap;
+        color: #3c362e;
       }
 
       @media (max-width: 860px) {
@@ -226,9 +265,9 @@
       <p id="meta"></p>
       <p id="answer"></p>
     </main>
-    <aside>
+    <aside class="people">
       <h2>Персонажи</h2>
-      <p id="characters"></p>
+      <div id="characters"></div>
     </aside>
     </div>
     <script>
@@ -300,10 +339,22 @@
       }
 
       function showCharacters(characters) {
-        const names = (characters || [])
-          .map((item) => (item.role ? item.name + " — " + item.role : item.name))
-          .filter(Boolean);
-        characterPanel.textContent = names.join(", ");
+        characterPanel.replaceChildren();
+        for (const item of characters || []) {
+          if (!item.name) continue;
+          const person = document.createElement("details");
+          person.className = "person";
+          const name = document.createElement("summary");
+          name.textContent = item.name;
+          const about = document.createElement("p");
+          about.className = "about";
+          const parts = [];
+          if (item.role) parts.push(item.role);
+          if (item.description) parts.push(item.description);
+          about.textContent = parts.join("\n\n") || "Описания нет";
+          person.append(name, about);
+          characterPanel.append(person);
+        }
       }
 
       async function loadCharacters() {
