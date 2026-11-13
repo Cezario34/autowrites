@@ -5,9 +5,11 @@ from pathlib import Path
 from app.infrastructure.books import default_books_path
 
 CHARACTERS_FILE = "characters.json"
+PLOT_FILE = "plot.json"
 PLAN_FILE = "plan.txt"
 TEXT_FILE = "text.txt"
 EMPTY_CHARACTERS = '{\n  "персонажи": []\n}\n'
+EMPTY_PLOT = '{\n  "сюжет": []\n}\n'
 _CHAPTER_FILE = re.compile(r"^глава (\d+)\.txt$", re.IGNORECASE)
 
 
@@ -27,7 +29,7 @@ def book_folder(root: Path, book_id: str) -> Path:
 
 
 class BookLibrary:
-    """Папка одной книги: characters.json, plan.txt и text.txt."""
+    """Папка одной книги: characters.json, plot.json, plan.txt и text.txt."""
 
     def __init__(self, root: Path | None = None) -> None:
         self.root = root or default_library_dir()
@@ -44,6 +46,9 @@ class BookLibrary:
             characters = folder / CHARACTERS_FILE
             if not characters.exists():
                 characters.write_text(EMPTY_CHARACTERS, encoding="utf-8")
+            plot = folder / PLOT_FILE
+            if not plot.exists():
+                plot.write_text(EMPTY_PLOT, encoding="utf-8")
             for filename in (PLAN_FILE, TEXT_FILE):
                 path = folder / filename
                 if not path.exists():
@@ -73,6 +78,21 @@ class BookLibrary:
             path = folder / _next_chapter_name(folder)
             path.write_text(text, encoding="utf-8")
             return path
+
+    def saved_chapters(self, book_id: str) -> list[tuple[str, str]]:
+        """Главы из файлов «глава 1.txt», «глава 2.txt» по возрастанию номера."""
+        folder = self.folder(book_id)
+        if not folder.is_dir():
+            return []
+        found: list[tuple[int, str]] = []
+        for path in folder.iterdir():
+            if not path.is_file():
+                continue
+            match = _CHAPTER_FILE.match(path.name)
+            if match:
+                found.append((int(match.group(1)), path.read_text(encoding="utf-8")))
+        found.sort()
+        return [(str(number), text) for number, text in found]
 
     def _legacy(self, book_id: str, filename: str) -> Path | None:
         parent = self.root.parent

@@ -45,6 +45,9 @@ def test_create_list_and_reject_blank_title(tmp_path, monkeypatch):
         assert json.loads((folder / "characters.json").read_text(encoding="utf-8")) == {
             "персонажи": []
         }
+        assert json.loads((folder / "plot.json").read_text(encoding="utf-8")) == {
+            "сюжет": []
+        }
 
 
 def test_unknown_book_has_no_character_list(tmp_path, monkeypatch):
@@ -107,6 +110,9 @@ def test_each_book_has_its_own_character_file_and_a_plan(tmp_path, monkeypatch):
     assert (other_folder / "text.txt").read_text(encoding="utf-8") == ""
     assert json.loads((other_folder / "characters.json").read_text(encoding="utf-8")) == {
         "персонажи": []
+    }
+    assert json.loads((other_folder / "plot.json").read_text(encoding="utf-8")) == {
+        "сюжет": []
     }
 
 
