@@ -264,6 +264,32 @@
         white-space: pre-wrap;
         margin: 1rem 0 0;
       }
+
+      dialog {
+        width: min(36rem, calc(100% - 2rem));
+        padding: 1.25rem;
+        border: 1px solid #d4cfc4;
+        border-radius: 8px;
+        background: #f6f4ef;
+        color: inherit;
+      }
+
+      dialog::backdrop {
+        background: rgba(28, 26, 22, 0.35);
+      }
+
+      dialog h2 {
+        margin: 0 0 0.35rem;
+        font-size: 1.2rem;
+      }
+
+      dialog .lead {
+        margin-bottom: 0.9rem;
+      }
+
+      dialog textarea {
+        min-height: 8rem;
+      }
     </style>
   </head>
   <body>
@@ -280,6 +306,7 @@
         «Сохранить и дополнить» кладёт главу в файл «глава 1», потом «глава 2»
         и сразу дописывает сюжет и персонажей. «Проверить текст» сверяет
         вставленный фрагмент с этими JSON и пишет замечания автору.
+        «Предложить главу» спрашивает, куда вести сюжет, и пишет продолжение.
       </p>
       <form id="book-form" class="books">
         <label>
@@ -299,8 +326,24 @@
         <div class="actions">
           <button id="save-text" type="button">Сохранить и дополнить</button>
           <button id="review" class="secondary" type="button">Проверить текст</button>
+          <button id="suggest" class="secondary" type="button">Предложить главу</button>
         </div>
       </form>
+      <dialog id="suggest-dialog">
+        <form id="suggest-form">
+          <h2>Предложить главу</h2>
+          <p class="lead">
+            Куда вести сюжет. Запрос уйдёт в GPT-6.1 Sol вместе со всеми
+            фрагментами книги и примерами диалогов и описаний.
+          </p>
+          <label for="direction">Направление</label>
+          <textarea id="direction" name="prompt" required></textarea>
+          <div class="actions">
+            <button type="submit">Предложить</button>
+            <button id="suggest-cancel" class="secondary" type="button">Отмена</button>
+          </div>
+        </form>
+      </dialog>
       <div class="progress" id="progress" hidden>
         <progress aria-label="Идёт обработка"></progress>
       </div>
@@ -324,6 +367,11 @@
       const checkButton = document.querySelector("#check");
       const saveButton = document.querySelector("#save");
       const reviewButton = document.querySelector("#review");
+      const suggestButton = document.querySelector("#suggest");
+      const suggestDialog = document.querySelector("#suggest-dialog");
+      const suggestForm = document.querySelector("#suggest-form");
+      const direction = document.querySelector("#direction");
+      const suggestCancel = document.querySelector("#suggest-cancel");
       const progress = document.querySelector("#progress");
       const status = document.querySelector("#status");
       const meta = document.querySelector("#meta");
@@ -600,8 +648,47 @@
       function setBusy(busy) {
         saveTextButton.disabled = busy;
         reviewButton.disabled = busy;
+        suggestButton.disabled = busy;
         if (checkButton) checkButton.disabled = busy;
         if (saveButton) saveButton.disabled = busy;
+      }
+
+      async function suggestChapter() {
+        if (!bookSelect.value) {
+          showStatus("Сначала создайте или выберите книгу");
+          return;
+        }
+        if (!direction.value.trim()) {
+          showStatus("Напиши, куда вести сюжет");
+          return;
+        }
+        const prompt = direction.value;
+        suggestDialog.close();
+        setBusy(true);
+        answer.textContent = "";
+        showProgress("Предлагаю главу…");
+        try {
+          const response = await fetch(
+            "/api/books/" + encodeURIComponent(bookSelect.value) + "/suggest",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ prompt: prompt, text: text.value }),
+            }
+          );
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(payload.detail || "Не удалось предложить главу");
+          }
+          answer.textContent = payload.chapter || "";
+          progress.hidden = true;
+          showStatus("Глава предложена. Модель: " + (payload.model || ""));
+        } catch (error) {
+          progress.hidden = true;
+          showStatus(error.message || "Не удалось предложить главу");
+        } finally {
+          setBusy(false);
+        }
       }
 
       async function reviewText() {
@@ -751,6 +838,25 @@
       reviewButton.addEventListener("click", () => {
         reviewText().catch((error) => {
           showStatus(error.message || "Не удалось проверить текст");
+        });
+      });
+
+      suggestButton.addEventListener("click", () => {
+        if (!bookSelect.value) {
+          showStatus("Сначала создайте или выберите книгу");
+          return;
+        }
+        suggestDialog.showModal();
+      });
+
+      suggestCancel.addEventListener("click", () => {
+        suggestDialog.close();
+      });
+
+      suggestForm.addEventListener("submit", (event) => {
+        event.preventDefault();
+        suggestChapter().catch((error) => {
+          showStatus(error.message || "Не удалось предложить главу");
         });
       });
 

@@ -2,9 +2,11 @@ import json
 import logging
 from dataclasses import dataclass
 
+from app.core.config import settings
 from app.core.prompts import (
     PLOT_SUPPLEMENT_SYSTEM_PROMPT,
     REVIEW_SYSTEM_PROMPT,
+    SUGGEST_CHAPTER_SYSTEM_PROMPT,
     SUPPLEMENT_SYSTEM_PROMPT,
 )
 from app.infrastructure.book_files import CHARACTERS_FILE, PLAN_FILE, PLOT_FILE, library
@@ -28,7 +30,9 @@ from app.infrastructure.openai_client import (
     OpenAIRequestError,
     openai_client,
 )
+from app.infrastructure.style_examples import read_descriptions, read_dialogues
 from app.infrastructure.vector_store import vector_store
+from app.services.rag_service import rag_service
 
 logger = logging.getLogger("app.books")
 
@@ -61,6 +65,10 @@ class PlotSupplementError(Exception):
 
 class NoSavedChapterError(Exception):
     """В папке книги ещё нет файла главы."""
+
+
+class EmptyDirectionError(Exception):
+    """Не сказано, куда вести сюжет."""
 
 
 @dataclass(frozen=True)
@@ -248,6 +256,55 @@ def review_chapter(book_id: str, text: str) -> str:
         raise OpenAIRequestError("Модель не прислала проверку")
     logger.info("этап: проверка текста, символов=%s", len(review))
     return review
+
+
+def _section(title: str, body: str) -> str:
+    return f"{title}:\n{body.strip() or '—'}"
+
+
+def suggest_chapter(book_id: str, direction: str, draft: str = "") -> tuple[str, str]:
+    """Пишет продолжение по всем фрагментам книги и примерам диалогов и описаний."""
+    require_book(book_id)
+    if not direction.strip():
+        raise EmptyDirectionError
+    fragments = rag_service.all_fragments(book_id)
+    people = library.read(book_id, CHARACTERS_FILE).strip() or characters_document([])
+    plot = library.read(book_id, PLOT_FILE).strip() or plot_document([])
+    plan = library.read(book_id, PLAN_FILE).strip()
+    chapters = "\n\n".join(
+        f"Глава {number}\n{text.strip()}"
+        for number, text in library.saved_chapters(book_id)
+        if text.strip()
+    )
+    stored = "\n\n---\n\n".join(fragments)
+    user = "\n\n".join(
+        (
+            _section("Куда вести сюжет", direction),
+            _section("Уже написано", draft),
+            _section("Сюжет", plot),
+            _section("Персонажи", people),
+            _section("План", plan),
+            _section("Сохранённые главы", chapters),
+            _section("Фрагменты книги", stored),
+            _section("Пример диалогов", read_dialogues()),
+            _section("Пример описаний", read_descriptions()),
+        )
+    )
+    model = settings.openai_chapter_model
+    logger.info(
+        "этап: предложение главы, фрагментов=%s, модель=%s",
+        len(fragments),
+        model,
+    )
+    chapter = openai_client.complete(
+        SUGGEST_CHAPTER_SYSTEM_PROMPT,
+        user,
+        temperature=None,
+        model=model,
+    ).strip()
+    if not chapter:
+        raise OpenAIRequestError("Модель не прислала главу")
+    return chapter, model
 
 
 def save_chapter_text(book_id: str, text: str) -> tuple[Book, str, str]:

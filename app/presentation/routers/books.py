@@ -8,6 +8,7 @@ from app.application.books import (
     CharacterSupplementError,
     EmptyBookTitleError,
     EmptyChapterError,
+    EmptyDirectionError,
     NoSavedChapterError,
     PlotSupplementError,
     UnknownBookError,
@@ -18,6 +19,7 @@ from app.application.books import (
     read_plot,
     review_chapter,
     save_chapter_text,
+    suggest_chapter,
     supplement_characters,
     supplement_saved_chapters,
 )
@@ -34,6 +36,8 @@ from app.presentation.schemas.book import (
     TextReviewResponse,
     PlotResponse,
     SavedChapterResultResponse,
+    SuggestChapterRequest,
+    SuggestChapterResponse,
     TextFileRequest,
 )
 
@@ -196,6 +200,27 @@ async def review_chapter_endpoint(book_id: str, request: TextFileRequest):
     except OpenAIRequestError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from None
     return TextReviewResponse(review=review)
+
+
+@router.post("/api/books/{book_id}/suggest", response_model=SuggestChapterResponse)
+async def suggest_chapter_endpoint(book_id: str, request: SuggestChapterRequest):
+    try:
+        chapter, model = suggest_chapter(book_id, request.prompt, request.text)
+    except UnknownBookError:
+        raise HTTPException(status_code=400, detail="Книга не найдена") from None
+    except EmptyDirectionError:
+        raise HTTPException(
+            status_code=400,
+            detail="Напиши, куда вести сюжет",
+        ) from None
+    except MissingOpenAIKeyError:
+        raise HTTPException(
+            status_code=400,
+            detail="В окружении нет ключа OpenAI",
+        ) from None
+    except OpenAIRequestError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from None
+    return SuggestChapterResponse(chapter=chapter, model=model)
 
 
 @router.post("/api/books/{book_id}/text")

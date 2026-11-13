@@ -366,6 +366,21 @@ class RAGService:
             kept.append(document)
         return kept
 
+    def all_fragments(self, book_id: str) -> list[str]:
+        """Все сохранённые фрагменты книги, без карточек персонажей."""
+        ranked: list[tuple[str, int, str]] = []
+        for document, meta in vector_store.documents_where({"book_id": book_id}):
+            if meta.get("kind") == "character" or not document.strip():
+                continue
+            chapter = str(meta.get("chapter_id") or "")
+            try:
+                index = int(meta.get("chunk_index") or 0)
+            except (TypeError, ValueError):
+                index = 0
+            ranked.append((chapter, index, document))
+        ranked.sort()
+        return [document for _, _, document in ranked]
+
     def saved_fragments(self, text: str, book_id: str) -> list[str]:
         """Ищет сохранённые фрагменты по началу, середине и концу нового отрывка."""
         found: list[str] = []

@@ -20,7 +20,8 @@ class OpenAIClient:
         user: str,
         *,
         json_mode: bool = False,
-        temperature: float = 0.2,
+        temperature: float | None = 0.2,
+        model: str | None = None,
     ) -> str:
         key = settings.openai_api_key.strip()
         if not key:
@@ -28,20 +29,22 @@ class OpenAIClient:
         from openai import OpenAI
 
         client = OpenAI(api_key=key, base_url=settings.openai_base_url)
+        chosen = (model or settings.openai_model).strip()
         logger.info(
             "этап: запрос openai, модель=%s, символов=%s",
-            settings.openai_model,
+            chosen,
             len(user),
         )
         request = {
-            "model": settings.openai_model,
-            "temperature": temperature,
+            "model": chosen,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
             "timeout": 120,
         }
+        if temperature is not None:
+            request["temperature"] = temperature
         if json_mode:
             request["response_format"] = {"type": "json_object"}
         try:
