@@ -1,4 +1,6 @@
+import json
 import re
+import shutil
 import threading
 from pathlib import Path
 
@@ -54,6 +56,32 @@ class BookLibrary:
                 if not path.exists():
                     path.write_text("", encoding="utf-8")
             return folder
+
+    def remove(self, book_id: str) -> None:
+        """Удаляет папку книги и старые файлы этого id вне папки."""
+        with self._lock:
+            folder = self.folder(book_id)
+            if folder.is_dir():
+                shutil.rmtree(folder)
+            parent = self.root.parent
+            for path in (
+                parent / "characters" / f"{book_id}.json",
+                parent / "plans" / f"{book_id}.txt",
+                parent / "texts" / f"{book_id}.txt",
+            ):
+                if path.is_file():
+                    path.unlink()
+            catalog = parent / "characters.json"
+            if not catalog.is_file():
+                return
+            payload = json.loads(catalog.read_text(encoding="utf-8"))
+            books = payload.get("books")
+            if isinstance(books, dict) and book_id in books:
+                del books[book_id]
+                catalog.write_text(
+                    json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
 
     def read(self, book_id: str, filename: str) -> str:
         path = self.folder(book_id) / filename
