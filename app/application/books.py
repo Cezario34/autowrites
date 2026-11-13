@@ -13,7 +13,7 @@ from app.infrastructure.characters import (
     Character,
     character_store,
     characters_document,
-    characters_from_model_text,
+    character_reply_from_model_text,
     supplement_decision,
 )
 from app.infrastructure.plot import (
@@ -207,18 +207,19 @@ def supplement_characters(book_id: str, chapter: str) -> tuple[list[Character], 
             SUPPLEMENT_SYSTEM_PROMPT,
             f"Текущие карточки:\n{stored}\n\nГлава:\n{chapter}",
         )
-        proposed = characters_from_model_text(raw)
+        proposed, identities = character_reply_from_model_text(raw)
     except MissingOpenAIKeyError:
         raise
     except OpenAIRequestError:
         raise
     except (json.JSONDecodeError, TypeError, ValueError) as exc:
         raise CharacterSupplementError("Модель вернула не список персонажей") from exc
-    decision, records = supplement_decision(existing, proposed)
+    decision, records = supplement_decision(existing, proposed, identities)
     logger.info(
-        "этап: дополнение персонажей, было=%s, стало=%s, решение=%s",
+        "этап: дополнение персонажей, было=%s, стало=%s, тождества=%s, решение=%s",
         len(existing),
         len(proposed),
+        len(identities),
         decision,
     )
     if decision == "lost":
