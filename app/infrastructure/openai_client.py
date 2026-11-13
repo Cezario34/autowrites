@@ -14,7 +14,14 @@ class OpenAIRequestError(Exception):
 
 
 class OpenAIClient:
-    def complete_json(self, system: str, user: str) -> str:
+    def complete(
+        self,
+        system: str,
+        user: str,
+        *,
+        json_mode: bool = False,
+        temperature: float = 0.2,
+    ) -> str:
         key = settings.openai_api_key.strip()
         if not key:
             raise MissingOpenAIKeyError
@@ -26,17 +33,19 @@ class OpenAIClient:
             settings.openai_model,
             len(user),
         )
+        request = {
+            "model": settings.openai_model,
+            "temperature": temperature,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "timeout": 120,
+        }
+        if json_mode:
+            request["response_format"] = {"type": "json_object"}
         try:
-            response = client.chat.completions.create(
-                model=settings.openai_model,
-                temperature=0.2,
-                response_format={"type": "json_object"},
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                timeout=120,
-            )
+            response = client.chat.completions.create(**request)
         except Exception as exc:
             detail = str(exc).strip().splitlines()[0][:300]
             if "sk-" in detail or key in detail:
@@ -52,6 +61,9 @@ class OpenAIClient:
             content,
         )
         return content
+
+    def complete_json(self, system: str, user: str) -> str:
+        return self.complete(system, user, json_mode=True)
 
 
 openai_client = OpenAIClient()

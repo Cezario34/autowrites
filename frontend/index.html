@@ -280,6 +280,8 @@
         «Сохранить как текст» кладёт главу в файл «глава 1», потом «глава 2»
         и дальше по номеру. «Дополнить сюжет и персонажей» берёт эти файлы:
         сначала коротко дописывает события в сюжет, затем дополняет персонажей.
+        «Проверить текст» сверяет вставленный фрагмент с этими JSON и пишет
+        замечания автору.
       </p>
       <form id="book-form" class="books">
         <label>
@@ -301,6 +303,7 @@
           <button id="check" class="secondary" type="button">Проверить по книге</button>
           <button id="save" class="secondary" type="button">Сохранить в базу</button>
           <button id="supplement" class="secondary" type="button">Дополнить сюжет и персонажей</button>
+          <button id="review" class="secondary" type="button">Проверить текст</button>
         </div>
       </form>
       <div class="progress" id="progress" hidden>
@@ -326,6 +329,7 @@
       const checkButton = document.querySelector("#check");
       const saveButton = document.querySelector("#save");
       const supplementButton = document.querySelector("#supplement");
+      const reviewButton = document.querySelector("#review");
       const progress = document.querySelector("#progress");
       const status = document.querySelector("#status");
       const meta = document.querySelector("#meta");
@@ -497,6 +501,7 @@
         }
         saveTextButton.disabled = true;
         supplementButton.disabled = true;
+        reviewButton.disabled = true;
         try {
           const response = await fetch(
             "/api/books/" + encodeURIComponent(bookSelect.value) + "/text",
@@ -532,6 +537,7 @@
         } finally {
           saveTextButton.disabled = false;
           supplementButton.disabled = false;
+          reviewButton.disabled = false;
         }
       }
 
@@ -608,6 +614,43 @@
         saveButton.disabled = busy;
         saveTextButton.disabled = busy;
         supplementButton.disabled = busy;
+        reviewButton.disabled = busy;
+      }
+
+      async function reviewText() {
+        if (!bookSelect.value) {
+          showStatus("Сначала создайте или выберите книгу");
+          return;
+        }
+        if (!text.value.trim()) {
+          showStatus("Глава пустая");
+          return;
+        }
+        setBusy(true);
+        answer.textContent = "";
+        showProgress("Проверяю текст…");
+        try {
+          const response = await fetch(
+            "/api/books/" + encodeURIComponent(bookSelect.value) + "/review",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ text: text.value }),
+            }
+          );
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(payload.detail || "Не удалось проверить текст");
+          }
+          answer.textContent = payload.review || "";
+          progress.hidden = true;
+          showStatus("Проверка готова");
+        } catch (error) {
+          progress.hidden = true;
+          showStatus(error.message || "Не удалось проверить текст");
+        } finally {
+          setBusy(false);
+        }
       }
 
       async function runChapter(url) {
@@ -721,6 +764,12 @@
       supplementButton.addEventListener("click", () => {
         supplementCharacters().catch((error) => {
           showStatus(error.message || "Не удалось дополнить персонажей");
+        });
+      });
+
+      reviewButton.addEventListener("click", () => {
+        reviewText().catch((error) => {
+          showStatus(error.message || "Не удалось проверить текст");
         });
       });
 

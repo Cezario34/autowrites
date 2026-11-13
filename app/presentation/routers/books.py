@@ -16,6 +16,7 @@ from app.application.books import (
     list_characters,
     read_plan,
     read_plot,
+    review_chapter,
     save_chapter_text,
     supplement_characters,
     supplement_saved_chapters,
@@ -30,6 +31,7 @@ from app.presentation.schemas.book import (
     CharacterSupplementResponse,
     PlanResponse,
     PlotChapterResponse,
+    TextReviewResponse,
     PlotResponse,
     SavedChapterResultResponse,
     TextFileRequest,
@@ -176,6 +178,24 @@ async def read_plan_endpoint(book_id: str):
     except UnknownBookError:
         raise HTTPException(status_code=400, detail="Книга не найдена") from None
     return PlanResponse(text=text)
+
+
+@router.post("/api/books/{book_id}/review", response_model=TextReviewResponse)
+async def review_chapter_endpoint(book_id: str, request: TextFileRequest):
+    try:
+        review = review_chapter(book_id, request.text)
+    except UnknownBookError:
+        raise HTTPException(status_code=400, detail="Книга не найдена") from None
+    except EmptyChapterError:
+        raise HTTPException(status_code=400, detail="Глава пустая") from None
+    except MissingOpenAIKeyError:
+        raise HTTPException(
+            status_code=400,
+            detail="В окружении нет ключа OpenAI",
+        ) from None
+    except OpenAIRequestError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from None
+    return TextReviewResponse(review=review)
 
 
 @router.post("/api/books/{book_id}/text")
