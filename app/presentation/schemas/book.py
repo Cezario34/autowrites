@@ -53,5 +53,9 @@ class PlanResponse(BaseModel):
     text: str
 
 
+class TextReviewResponse(BaseModel):
+    review: str
+
+
 class TextFileRequest(BaseModel):
     text: str

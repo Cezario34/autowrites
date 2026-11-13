@@ -2,7 +2,11 @@ import json
 import logging
 from dataclasses import dataclass
 
-from app.core.prompts import PLOT_SUPPLEMENT_SYSTEM_PROMPT, SUPPLEMENT_SYSTEM_PROMPT
+from app.core.prompts import (
+    PLOT_SUPPLEMENT_SYSTEM_PROMPT,
+    REVIEW_SYSTEM_PROMPT,
+    SUPPLEMENT_SYSTEM_PROMPT,
+)
 from app.infrastructure.book_files import CHARACTERS_FILE, PLAN_FILE, PLOT_FILE, library
 from app.infrastructure.books import Book, book_store
 from app.infrastructure.characters import (
@@ -225,6 +229,24 @@ def supplement_characters(book_id: str, chapter: str) -> tuple[list[Character], 
         return existing, False
     character_store.replace(book_id, records)
     return records, True
+
+
+def review_chapter(book_id: str, text: str) -> str:
+    """Проверяет вставленный текст по JSON персонажей и сюжета."""
+    require_book(book_id)
+    if not text.strip():
+        raise EmptyChapterError
+    people = library.read(book_id, CHARACTERS_FILE).strip() or characters_document([])
+    plot = library.read(book_id, PLOT_FILE).strip() or plot_document([])
+    review = openai_client.complete(
+        REVIEW_SYSTEM_PROMPT,
+        f"Персонажи:\n{people}\n\nСюжет:\n{plot}\n\nТекст:\n{text}",
+        temperature=0.4,
+    ).strip()
+    if not review:
+        raise OpenAIRequestError("Модель не прислала проверку")
+    logger.info("этап: проверка текста, символов=%s", len(review))
+    return review
 
 
 def save_chapter_text(book_id: str, text: str) -> tuple[Book, str, str]:

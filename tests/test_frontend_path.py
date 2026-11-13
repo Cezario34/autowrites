@@ -14,6 +14,8 @@ def test_page_saves_text_and_shows_plan_beside_names():
     page = Path("frontend/index.html").read_text(encoding="utf-8")
     assert "Сохранить как текст" in page
     assert "Дополнить сюжет и персонажей" in page
+    assert "Проверить текст" in page
+    assert "/review" in page
     assert "/supplement" in page
     assert "глава 1" in page
     assert "глава 2" in page
