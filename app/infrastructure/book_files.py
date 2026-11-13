@@ -1,3 +1,4 @@
+import re
 import threading
 from pathlib import Path
 
@@ -7,6 +8,7 @@ CHARACTERS_FILE = "characters.json"
 PLAN_FILE = "plan.txt"
 TEXT_FILE = "text.txt"
 EMPTY_CHARACTERS = '{\n  "персонажи": []\n}\n'
+_CHAPTER_FILE = re.compile(r"^глава (\d+)\.txt$", re.IGNORECASE)
 
 
 def default_library_dir() -> Path:
@@ -63,6 +65,15 @@ class BookLibrary:
         path.write_text(text, encoding="utf-8")
         return path
 
+    def write_next_chapter(self, book_id: str, text: str) -> Path:
+        """Пишет текст в «глава 1.txt», «глава 2.txt» и дальше, не затирая прошлые."""
+        with self._lock:
+            folder = self.folder(book_id)
+            folder.mkdir(parents=True, exist_ok=True)
+            path = folder / _next_chapter_name(folder)
+            path.write_text(text, encoding="utf-8")
+            return path
+
     def _legacy(self, book_id: str, filename: str) -> Path | None:
         parent = self.root.parent
         if filename == CHARACTERS_FILE:
@@ -72,6 +83,17 @@ class BookLibrary:
         if filename == TEXT_FILE:
             return parent / "texts" / f"{book_id}.txt"
         return None
+
+
+def _next_chapter_name(folder: Path) -> str:
+    highest = 0
+    for path in folder.iterdir():
+        if not path.is_file():
+            continue
+        match = _CHAPTER_FILE.match(path.name)
+        if match:
+            highest = max(highest, int(match.group(1)))
+    return f"глава {highest + 1}.txt"
 
 
 library = BookLibrary()
