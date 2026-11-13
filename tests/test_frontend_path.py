@@ -12,9 +12,12 @@ def test_prefers_frontend_inside_repository(tmp_path: Path):
 
 def test_page_saves_text_and_shows_plan_beside_names():
     page = Path("frontend/index.html").read_text(encoding="utf-8")
-    assert "Сохранить как текст" in page
-    assert "Дополнить сюжет и персонажей" in page
+    assert "Сохранить и дополнить" in page
     assert "Проверить текст" in page
+    assert "Проверить по книге" not in page
+    assert "Сохранить в базу" not in page
+    assert "/api/check-chapter" in page
+    assert "/api/save-chapter" in page
     assert "/review" in page
     assert "/supplement" in page
     assert "глава 1" in page
