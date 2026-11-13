@@ -98,15 +98,63 @@ def characters_document(characters: list[Character]) -> str:
     )
 
 
-def characters_from_model_text(raw: str) -> list[Character]:
+def _json_from_model_text(raw: str) -> object:
     text = raw.strip()
     if text.startswith("```"):
         text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-    payload = json.loads(text)
+    return json.loads(text)
+
+
+def characters_from_model_text(raw: str) -> list[Character]:
+    payload = _json_from_model_text(raw)
     characters = characters_from_payload(payload)
     if characters or is_empty_character_payload(payload):
         return characters
-    raise json.JSONDecodeError("JSON не список персонажей", text, 0)
+    raise json.JSONDecodeError("JSON не список персонажей", raw.strip(), 0)
+
+
+def identities_from_payload(payload: object) -> list[tuple[str, str]]:
+    """Пары «прежнее имя → имя, которое остаётся» из ответа модели."""
+    if not isinstance(payload, dict):
+        return []
+    found: list[tuple[str, str]] = []
+    for key in ("тождества", "identities"):
+        value = payload.get(key)
+        if not isinstance(value, list):
+            continue
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            was = _field(item, ("было", "from"))
+            became = _field(item, ("стало", "to"))
+            if was and became:
+                found.append((was, became))
+    people = None
+    for key in _LIST_KEYS:
+        value = payload.get(key)
+        if isinstance(value, list):
+            people = value
+            break
+    if people is None:
+        return found
+    for item in people:
+        if not isinstance(item, dict):
+            continue
+        became = _field(item, _NAME_KEYS)
+        previous = item.get("прежние имена", item.get("прежнее имя"))
+        names = previous if isinstance(previous, list) else [previous]
+        for name in names:
+            if isinstance(name, str) and name.strip() and became:
+                found.append((name.strip(), became))
+    return found
+
+
+def character_reply_from_model_text(raw: str) -> tuple[list[Character], list[tuple[str, str]]]:
+    payload = _json_from_model_text(raw)
+    characters = characters_from_payload(payload)
+    if not characters and not is_empty_character_payload(payload):
+        raise json.JSONDecodeError("JSON не список персонажей", raw.strip(), 0)
+    return characters, identities_from_payload(payload)
 
 
 def _card_key(name: str) -> str:
@@ -126,16 +174,114 @@ def _same_card(left: Character, right: Character) -> bool:
     )
 
 
-def supplement_decision(
+def _prefer_rewritten(rewritten: Character, older: Character) -> Character:
+    """Новая карточка заменяет текст. Факт старой дописывается, только если его ещё нет."""
+    return Character(
+        name=rewritten.name,
+        role=rewritten.role.strip() or older.role.strip(),
+        description=_append_fact(rewritten.description, older.description),
+        appearance=_append_fact(rewritten.appearance, older.appearance),
+    )
+
+
+def _resolve_name(key: str, alias_to_final: dict[str, str]) -> str:
+    seen: set[str] = set()
+    while key in alias_to_final and key not in seen:
+        seen.add(key)
+        key = alias_to_final[key]
+    return key
+
+
+def merge_same_person(
     existing: list[Character],
     proposed: list[Character],
-) -> tuple[str, list[Character]]:
-    """«same», если новых сведений нет; «added», если список только вырос; «lost», если ответ стёр уже записанное."""
+    identities: list[tuple[str, str]],
+) -> tuple[list[Character], set[str]]:
+    """Склеивает карточки, если глава назвала прежнее имя и настоящее одним человеком."""
     existing_by: dict[str, Character] = {}
     for character in existing:
         key = _card_key(character.name)
         if key:
             existing_by[key] = character
+    alias_to_final: dict[str, str] = {}
+    final_spelling: dict[str, str] = {}
+    for was, became in identities:
+        was_key = _card_key(was)
+        became_key = _card_key(became)
+        if not was_key or not became_key or was_key == became_key:
+            continue
+        if was_key not in existing_by:
+            continue
+        alias_to_final[was_key] = became_key
+        final_spelling[became_key] = became.strip()
+    absorbed = {
+        key for key in alias_to_final if _resolve_name(key, alias_to_final) != key
+    }
+    ordered: list[Character] = []
+    index: dict[str, int] = {}
+    pending: dict[str, Character] = {}
+    for character in proposed:
+        key = _card_key(character.name)
+        if not key:
+            continue
+        target = _resolve_name(key, alias_to_final)
+        if target != key:
+            if target not in index:
+                name = final_spelling.get(target, character.name)
+                held = pending.get(target, Character(name, "", "", ""))
+                pending[target] = _prefer_rewritten(held, character)
+                continue
+            ordered[index[target]] = _prefer_rewritten(ordered[index[target]], character)
+            continue
+        if target not in index:
+            index[target] = len(ordered)
+            ordered.append(character)
+            continue
+        ordered[index[target]] = _prefer_rewritten(character, ordered[index[target]])
+    for target, held in pending.items():
+        if target not in index:
+            index[target] = len(ordered)
+            ordered.append(held)
+            continue
+        ordered[index[target]] = _prefer_rewritten(ordered[index[target]], held)
+    for was_key in absorbed:
+        target = _resolve_name(was_key, alias_to_final)
+        source = existing_by[was_key]
+        if target not in index:
+            previous = existing_by.get(target)
+            name = final_spelling.get(target, previous.name if previous else source.name)
+            base = previous or Character(name, "", "", "")
+            if _card_key(base.name) != target:
+                base = Character(name, base.role, base.description, base.appearance)
+            index[target] = len(ordered)
+            ordered.append(_prefer_rewritten(base, source))
+            continue
+        ordered[index[target]] = _prefer_rewritten(ordered[index[target]], source)
+    return ordered, absorbed
+
+
+def supplement_decision(
+    existing: list[Character],
+    proposed: list[Character],
+    identities: list[tuple[str, str]] | None = None,
+) -> tuple[str, list[Character]]:
+    """«same», если новых сведений нет; «added», если список вырос или люди склеились; «lost», если ответ стёр уже записанное."""
+    existing_by: dict[str, Character] = {}
+    for character in existing:
+        key = _card_key(character.name)
+        if key:
+            existing_by[key] = character
+    absorbed: set[str] = set()
+    targets: set[str] = set()
+    if identities:
+        proposed, absorbed = merge_same_person(existing, proposed, identities)
+        alias_to_final = {}
+        for was, became in identities:
+            was_key = _card_key(was)
+            became_key = _card_key(became)
+            if was_key in absorbed and became_key:
+                alias_to_final[was_key] = became_key
+        targets = {_resolve_name(key, alias_to_final) for key in absorbed}
     ordered: list[Character] = []
     proposed_by: dict[str, int] = {}
     for character in proposed:
@@ -149,15 +295,21 @@ def supplement_decision(
         else:
             ordered[slot] = character
     for key, current in existing_by.items():
+        if key in absorbed:
+            continue
         slot = proposed_by.get(key)
         incoming = ordered[slot] if slot is not None else None
-        if incoming is None or not (
+        if incoming is None:
+            return "lost", existing
+        if key in targets:
+            continue
+        if not (
             _keeps_text(current.role, incoming.role)
             and _keeps_text(current.description, incoming.description)
             and _keeps_text(current.appearance, incoming.appearance)
         ):
             return "lost", existing
-    added = any(key not in existing_by for key in proposed_by)
+    added = bool(absorbed) or any(key not in existing_by for key in proposed_by)
     if not added:
         added = any(
             not _same_card(current, ordered[proposed_by[key]])

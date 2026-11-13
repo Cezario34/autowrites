@@ -140,6 +140,81 @@ def test_supplement_does_not_replace_a_card_the_model_rewrote(tmp_path, monkeypa
     assert original != stored
 
 
+def test_revealed_name_overwrites_the_provisional_card(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    book_id, folder = _book("Форт")
+    path = folder / "characters.json"
+    original = {
+        "персонажи": [
+            {
+                "имя": "старуха",
+                "роль": "жительница форта",
+                "описание": "Одна из женщин, вышедших навстречу Ульрике.",
+                "внешность": "совсем старуха, кутающаяся в дырявую шаль",
+            },
+            {
+                "имя": "девка",
+                "роль": "жительница форта",
+                "описание": "Одна из женщин, вышедших навстречу Ульрике.",
+                "внешность": "забитого вида, с пустым взглядом",
+            },
+            {
+                "имя": "Герта",
+                "роль": "жительница форта",
+                "описание": "Старая женщина, которая завела Ульрику в жилую башню и напомнила, что у них еще три овцы.",
+                "внешность": "старая",
+            },
+            {
+                "имя": "Марта",
+                "роль": "жительница форта",
+                "описание": "Молодая женщина, которая завела Ульрику в жилую башню; испуганно всхлипнула, когда Ульрика объявила об урезании пайков.",
+                "внешность": "молодая",
+            },
+        ]
+    }
+    path.write_text(json.dumps(original, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    def without_identity(system, user):
+        kept = [item for item in original["персонажи"] if item["имя"] != "девка"]
+        kept[-1] = {**kept[-1], "внешность": "забитого вида, с пустым взглядом"}
+        return json.dumps({"персонажи": kept}, ensure_ascii=False)
+
+    monkeypatch.setattr(openai_client, "complete_json", without_identity)
+    refused = client.post(
+        f"/api/books/{book_id}/characters/supplement",
+        json={"text": "Девка назвалась Мартой."},
+    )
+    assert refused.status_code == 400
+    assert path.read_text(encoding="utf-8") == json.dumps(original, ensure_ascii=False, indent=2) + "\n"
+
+    def with_identity(system, user):
+        assert "тождества" in system
+        kept = [item for item in original["персонажи"] if item["имя"] != "девка"]
+        kept[-1] = {**kept[-1], "внешность": "забитого вида, с пустым взглядом"}
+        return json.dumps(
+            {
+                "персонажи": kept,
+                "тождества": [{"было": "девка", "стало": "Марта"}],
+            },
+            ensure_ascii=False,
+        )
+
+    monkeypatch.setattr(openai_client, "complete_json", with_identity)
+    saved = client.post(
+        f"/api/books/{book_id}/characters/supplement",
+        json={"text": "Девка назвалась Мартой."},
+    )
+    assert saved.status_code == 200
+    assert saved.json()["updated"] is True
+    written = json.loads(path.read_text(encoding="utf-8"))
+    names = [item["имя"] for item in written["персонажи"]]
+    assert names == ["старуха", "Герта", "Марта"]
+    assert written["персонажи"][0] == original["персонажи"][0]
+    assert written["персонажи"][1] == original["персонажи"][2]
+    assert written["персонажи"][2]["внешность"] == "забитого вида, с пустым взглядом"
+    assert "девка" not in path.read_text(encoding="utf-8")
+
+
 def test_missing_key_and_empty_chapter_do_not_call_openai(tmp_path, monkeypatch):
     _isolate(tmp_path, monkeypatch)
     book_id, _folder = _book("Восток")

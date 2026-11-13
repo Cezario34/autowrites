@@ -1,6 +1,11 @@
 import pytest
 
-from app.infrastructure.characters import Character, merge_characters
+from app.infrastructure.characters import (
+    Character,
+    character_reply_from_model_text,
+    merge_characters,
+    supplement_decision,
+)
 from app.services.rag_service import (
     CharacterParseError,
     SplitError,
@@ -78,6 +83,79 @@ def test_merge_keeps_written_appearance_when_the_new_card_omits_it():
     assert kept[0].appearance == "Высокий, с тёмной бородой."
     assert kept[0].description == "Проводник. Честный и прямой."
     assert kept[0].role == "лесной охотник"
+
+
+def test_revealed_name_replaces_the_provisional_card():
+    old_woman = Character(
+        "старуха",
+        "жительница форта",
+        "Одна из женщин, вышедших навстречу Ульрике.",
+        "совсем старуха, кутающаяся в дырявую шаль",
+    )
+    girl = Character(
+        "девка",
+        "жительница форта",
+        "Одна из женщин, вышедших навстречу Ульрике.",
+        "забитого вида, с пустым взглядом",
+    )
+    gerta = Character(
+        "Герта",
+        "жительница форта",
+        "Старая женщина, которая завела Ульрику в жилую башню и напомнила, что у них еще три овцы.",
+        "старая",
+    )
+    marta = Character(
+        "Марта",
+        "жительница форта",
+        "Молодая женщина, которая завела Ульрику в жилую башню; испуганно всхлипнула, когда Ульрика объявила об урезании пайков.",
+        "молодая",
+    )
+    rewritten = Character(
+        marta.name,
+        marta.role,
+        marta.description,
+        "забитого вида, с пустым взглядом",
+    )
+    decision, records = supplement_decision(
+        [old_woman, girl, gerta, marta],
+        [old_woman, gerta, rewritten],
+        [("девка", "Марта")],
+    )
+    assert decision == "added"
+    assert [item.name for item in records] == ["старуха", "Герта", "Марта"]
+    assert records[0] == old_woman
+    assert records[1] == gerta
+    assert records[2].appearance == "забитого вида, с пустым взглядом"
+    assert "молодая" not in records[2].appearance
+
+    unchanged = supplement_decision(
+        [old_woman, girl, gerta, marta],
+        [old_woman, gerta, marta],
+        [],
+    )
+    assert unchanged[0] == "lost"
+
+
+def test_identity_moves_facts_when_the_model_leaves_both_cards():
+    girl = Character("девка", "жительница форта", "Вышла навстречу.", "пустой взгляд")
+    marta = Character("Марта", "жительница форта", "Завела Ульрику в башню.", "молодая")
+    decision, records = supplement_decision(
+        [girl, marta],
+        [girl, marta],
+        [("девка", "Марта")],
+    )
+    assert decision == "added"
+    assert [item.name for item in records] == ["Марта"]
+    assert records[0].appearance == "молодая пустой взгляд"
+    assert "Вышла навстречу." in records[0].description
+
+
+def test_previous_name_on_the_card_is_an_identity():
+    people, identities = character_reply_from_model_text(
+        '{"персонажи":[{"имя":"Марта","роль":"жительница форта","описание":"Завела в башню.","внешность":"пустой взгляд","прежнее имя":"девка"}],"тождества":[]}'
+    )
+    assert identities == [("девка", "Марта")]
+    assert people[0].name == "Марта"
 
 
 def test_plain_prose_is_still_rejected(caplog):
