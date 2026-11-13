@@ -265,6 +265,56 @@ def test_new_character_is_saved_when_an_old_field_was_rewritten(tmp_path, monkey
     assert written["персонажи"][1]["описание"] == "Пришёл в форт."
 
 
+def test_appearance_can_only_be_supplemented(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    book_id, folder = _book("Шаль")
+    path = folder / "characters.json"
+    path.write_text(
+        json.dumps(
+            {
+                "персонажи": [
+                    {
+                        "имя": "Герта",
+                        "роль": "старая женщина форта",
+                        "описание": "Готовит и штопает.",
+                        "внешность": "Кутается в шаль.",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def complete_json(system, user):
+        assert "Внешность удалять запрещено" in system
+        return json.dumps(
+            {
+                "персонажи": [
+                    {
+                        "имя": "Герта",
+                        "роль": "старая женщина форта",
+                        "описание": "Готовит и штопает.",
+                        "внешность": "Седые волосы.",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    monkeypatch.setattr(openai_client, "complete_json", complete_json)
+    response = client.post(
+        f"/api/books/{book_id}/characters/supplement",
+        json={"text": "У Герты седые волосы."},
+    )
+    assert response.status_code == 200
+    assert response.json()["updated"] is True
+    written = json.loads(path.read_text(encoding="utf-8"))
+    assert written["персонажи"][0]["внешность"] == "Кутается в шаль. Седые волосы."
+
+
 def test_revealed_name_overwrites_the_provisional_card(tmp_path, monkeypatch):
     _isolate(tmp_path, monkeypatch)
     book_id, folder = _book("Форт")
@@ -336,7 +386,10 @@ def test_revealed_name_overwrites_the_provisional_card(tmp_path, monkeypatch):
     assert names == ["старуха", "Герта", "Марта"]
     assert written["персонажи"][0] == original["персонажи"][0]
     assert written["персонажи"][1] == original["персонажи"][2]
-    assert written["персонажи"][2]["внешность"] == "забитого вида, с пустым взглядом"
+    assert (
+        written["персонажи"][2]["внешность"]
+        == "молодая забитого вида, с пустым взглядом"
+    )
     assert "девка" not in path.read_text(encoding="utf-8")
 
 

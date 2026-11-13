@@ -268,10 +268,9 @@ def _keep_written_text(
     incoming: Character,
     restored: list[str],
 ) -> Character:
-    """Новый факт оставляем, только если старый текст в нём цел. Иначе возвращаем старое поле."""
+    """Роль и описание не заменяются. Внешность можно только дополнить."""
     role = incoming.role
     description = incoming.description
-    appearance = incoming.appearance
     rewritten: list[str] = []
     if not _keeps_text(current.role, incoming.role):
         role = current.role
@@ -279,15 +278,32 @@ def _keep_written_text(
     if not _keeps_text(current.description, incoming.description):
         description = current.description
         rewritten.append("описание")
-    if not _keeps_text(current.appearance, incoming.appearance):
-        appearance = current.appearance
-        rewritten.append("внешность")
+    appearance = _append_fact(current.appearance, incoming.appearance)
+    if current.appearance.strip() and not _keeps_text(current.appearance, incoming.appearance):
+        restored.append(f"У «{current.name}» внешность не стёрта.")
     if rewritten:
         restored.append(f"У «{current.name}» оставлено прежнее: {', '.join(rewritten)}.")
     return Character(
         name=current.name,
         role=role,
         description=description,
+        appearance=appearance,
+    )
+
+
+def _keep_appearance(
+    current: Character,
+    incoming: Character,
+    restored: list[str],
+) -> Character:
+    """При склейке имён роль и описание можно переписать, внешность — только дописать."""
+    appearance = _append_fact(current.appearance, incoming.appearance)
+    if current.appearance.strip() and not _keeps_text(current.appearance, incoming.appearance):
+        restored.append(f"У «{current.name}» внешность не стёрта.")
+    return Character(
+        name=incoming.name,
+        role=incoming.role,
+        description=incoming.description,
         appearance=appearance,
     )
 
@@ -337,6 +353,7 @@ def supplement_decision(
             problems.append(f"Пропала карточка «{current.name}».")
             continue
         if key in targets:
+            ordered[slot] = _keep_appearance(current, incoming, restored)
             continue
         ordered[slot] = _keep_written_text(current, incoming, restored)
     if problems:
@@ -364,10 +381,16 @@ def character_record(character: Character) -> dict[str, str]:
 
 
 def _append_fact(current: str, incoming: str) -> str:
+    """Старый текст остаётся. Новый дописывается, только если его ещё нет."""
+    stored = current.strip()
     extra = incoming.strip()
-    if extra and extra not in current:
-        return f"{current} {extra}".strip()
-    return current
+    if not stored:
+        return extra
+    if not extra or extra in stored:
+        return stored
+    if stored in extra:
+        return extra
+    return f"{stored} {extra}"
 
 
 def merge_characters(
