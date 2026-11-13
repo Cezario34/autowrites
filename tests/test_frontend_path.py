@@ -31,6 +31,7 @@ def test_page_saves_text_and_shows_plan_beside_names():
     assert "Вывести сюжет" in page
     assert ">Удалить</button>" in page
     assert 'method: "DELETE"' in page
+    assert 'className = "chapter"' in page
     assert 'title.textContent = "Глава "' in page
     assert 'document.createElement("details")' in page
     assert 'document.createElement("summary")' in page

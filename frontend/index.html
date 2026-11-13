@@ -73,21 +73,45 @@
       #plot {
         max-height: 36vh;
         margin-top: 0.6rem;
+        padding: 0.25rem 0;
       }
 
-      #plot h3 {
-        margin: 0.9rem 0 0.15rem;
-        font-size: 1rem;
+      #plot .chapter {
+        border-top: 1px solid #ece7de;
+      }
+
+      #plot .chapter:first-child {
+        border-top: 0;
+      }
+
+      #plot summary {
+        cursor: pointer;
+        padding: 0.45rem 0.75rem;
         font-weight: 600;
+        list-style: none;
       }
 
-      #plot article:first-child h3 {
-        margin-top: 0;
+      #plot summary::-webkit-details-marker {
+        display: none;
       }
 
-      #plot p {
+      #plot summary::before {
+        content: "▸ ";
+        color: #8a8175;
+      }
+
+      #plot .chapter[open] summary::before {
+        content: "▾ ";
+      }
+
+      #plot .text {
         margin: 0;
+        padding: 0 0.75rem 0.7rem 1.6rem;
         white-space: pre-wrap;
+      }
+
+      #plot > p {
+        margin: 0.45rem 0.75rem;
       }
 
       #characters {
@@ -485,6 +509,11 @@
       }
 
       function showPlot(chapters) {
+        const open = new Set(
+          [...plotPanel.querySelectorAll("details.chapter[open]")].map(
+            (node) => node.dataset.number
+          )
+        );
         plotPanel.replaceChildren();
         plotPanel.hidden = false;
         const ordered = chapters.slice().sort((left, right) => Number(left.number) - Number(right.number));
@@ -495,10 +524,14 @@
           return;
         }
         for (const chapter of ordered) {
-          const block = document.createElement("article");
-          const title = document.createElement("h3");
+          const block = document.createElement("details");
+          block.className = "chapter";
+          block.dataset.number = String(chapter.number);
+          if (open.has(block.dataset.number)) block.open = true;
+          const title = document.createElement("summary");
           title.textContent = "Глава " + chapter.number;
           const description = document.createElement("p");
+          description.className = "text";
           description.textContent = chapter.description || "";
           block.append(title, description);
           plotPanel.append(block);
