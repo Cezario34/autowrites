@@ -105,6 +105,26 @@ def test_each_book_has_its_own_character_file_and_a_plan(tmp_path, monkeypatch):
     plan = client.get(f"/api/books/{book_id}/plan")
     assert plan.status_code == 200
     assert plan.json() == {"text": "1. Башня\n2. Конунг"}
+    (folder / "plot.json").write_text(
+        json.dumps(
+            {
+                "сюжет": [
+                    {"глава": "2", "описание": "Хаген уходит."},
+                    {"глава": "1", "описание": "Ульрика падает с башни."},
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    plot = client.get(f"/api/books/{book_id}/plot")
+    assert plot.status_code == 200
+    assert plot.json() == {
+        "chapters": [
+            {"number": "1", "description": "Ульрика падает с башни."},
+            {"number": "2", "description": "Хаген уходит."},
+        ]
+    }
     other_folder = tmp_path / "books" / "Юг"
     assert (other_folder / "plan.txt").read_text(encoding="utf-8") == ""
     assert (other_folder / "text.txt").read_text(encoding="utf-8") == ""

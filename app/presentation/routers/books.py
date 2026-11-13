@@ -15,6 +15,7 @@ from app.application.books import (
     list_books,
     list_characters,
     read_plan,
+    read_plot,
     save_chapter_text,
     supplement_characters,
     supplement_saved_chapters,
@@ -29,6 +30,7 @@ from app.presentation.schemas.book import (
     CharacterSupplementResponse,
     PlanResponse,
     PlotChapterResponse,
+    PlotResponse,
     SavedChapterResultResponse,
     TextFileRequest,
 )
@@ -150,6 +152,20 @@ async def supplement_saved_chapters_endpoint(book_id: str):
             for item in plot
         ],
         characters=_character_payload(characters),
+    )
+
+
+@router.get("/api/books/{book_id}/plot", response_model=PlotResponse)
+async def read_plot_endpoint(book_id: str):
+    try:
+        chapters = read_plot(book_id)
+    except UnknownBookError:
+        raise HTTPException(status_code=400, detail="Книга не найдена") from None
+    return PlotResponse(
+        chapters=[
+            PlotChapterResponse(number=chapter.number, description=chapter.description)
+            for chapter in chapters
+        ]
     )
 
 
