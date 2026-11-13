@@ -116,7 +116,7 @@ def test_revealed_name_replaces_the_provisional_card():
         marta.description,
         "забитого вида, с пустым взглядом",
     )
-    decision, records = supplement_decision(
+    decision, records, _reason = supplement_decision(
         [old_woman, girl, gerta, marta],
         [old_woman, gerta, rewritten],
         [("девка", "Марта")],
@@ -134,12 +134,13 @@ def test_revealed_name_replaces_the_provisional_card():
         [],
     )
     assert unchanged[0] == "lost"
+    assert "девка" in unchanged[2]
 
 
 def test_identity_moves_facts_when_the_model_leaves_both_cards():
     girl = Character("девка", "жительница форта", "Вышла навстречу.", "пустой взгляд")
     marta = Character("Марта", "жительница форта", "Завела Ульрику в башню.", "молодая")
-    decision, records = supplement_decision(
+    decision, records, _reason = supplement_decision(
         [girl, marta],
         [girl, marta],
         [("девка", "Марта")],

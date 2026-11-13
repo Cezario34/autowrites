@@ -264,8 +264,8 @@ def supplement_decision(
     existing: list[Character],
     proposed: list[Character],
     identities: list[tuple[str, str]] | None = None,
-) -> tuple[str, list[Character]]:
-    """«same», если новых сведений нет; «added», если список вырос или люди склеились; «lost», если ответ стёр уже записанное."""
+) -> tuple[str, list[Character], str]:
+    """«same», если новых сведений нет; «added», если список вырос или люди склеились; «lost», если ответ стёр уже записанное. Третье значение — что именно потеряно."""
     existing_by: dict[str, Character] = {}
     for character in existing:
         key = _card_key(character.name)
@@ -294,21 +294,32 @@ def supplement_decision(
             ordered.append(character)
         else:
             ordered[slot] = character
+    problems: list[str] = []
     for key, current in existing_by.items():
         if key in absorbed:
             continue
         slot = proposed_by.get(key)
         incoming = ordered[slot] if slot is not None else None
         if incoming is None:
-            return "lost", existing
+            problems.append(f"Пропала карточка «{current.name}».")
+            continue
         if key in targets:
             continue
-        if not (
-            _keeps_text(current.role, incoming.role)
-            and _keeps_text(current.description, incoming.description)
-            and _keeps_text(current.appearance, incoming.appearance)
-        ):
-            return "lost", existing
+        rewritten = [
+            label
+            for label, kept in (
+                ("роль", _keeps_text(current.role, incoming.role)),
+                ("описание", _keeps_text(current.description, incoming.description)),
+                ("внешность", _keeps_text(current.appearance, incoming.appearance)),
+            )
+            if not kept
+        ]
+        if rewritten:
+            problems.append(
+                f"У «{current.name}» переписаны {', '.join(rewritten)}."
+            )
+    if problems:
+        return "lost", existing, " ".join(problems)
     added = bool(absorbed) or any(key not in existing_by for key in proposed_by)
     if not added:
         added = any(
@@ -316,8 +327,8 @@ def supplement_decision(
             for key, current in existing_by.items()
         )
     if not added:
-        return "same", existing
-    return "added", ordered
+        return "same", existing, ""
+    return "added", ordered, ""
 
 
 def character_record(character: Character) -> dict[str, str]:

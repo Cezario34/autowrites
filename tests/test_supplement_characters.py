@@ -140,6 +140,69 @@ def test_supplement_does_not_replace_a_card_the_model_rewrote(tmp_path, monkeypa
     assert original != stored
 
 
+def test_lost_character_reply_is_retried_and_then_saved(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    book_id, folder = _book("Форт")
+    path = folder / "characters.json"
+    original = {
+        "персонажи": [
+            {
+                "имя": "Герта",
+                "роль": "старая женщина форта",
+                "описание": "Готовит и штопает.",
+                "внешность": "Кутается в шаль.",
+            }
+        ]
+    }
+    path.write_text(json.dumps(original, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    calls = {"n": 0}
+
+    def complete_json(system, user):
+        calls["n"] += 1
+        calls["user"] = user
+        if calls["n"] == 1:
+            return json.dumps(
+                {
+                    "персонажи": [
+                        {
+                            "имя": "Герта",
+                            "роль": "старуха",
+                            "описание": "Скептична.",
+                            "внешность": "",
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            )
+        return json.dumps(
+            {
+                "персонажи": [
+                    {
+                        "имя": "Герта",
+                        "роль": "старая женщина форта",
+                        "описание": "Готовит и штопает. Скептична.",
+                        "внешность": "Кутается в шаль.",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    monkeypatch.setattr(openai_client, "complete_json", complete_json)
+    response = client.post(
+        f"/api/books/{book_id}/characters/supplement",
+        json={"text": "Герта скептична."},
+    )
+    assert response.status_code == 200
+    assert response.json()["updated"] is True
+    assert calls["n"] == 2
+    assert "переписаны" in calls["user"]
+    assert "файл не менялся" in calls["user"]
+    written = json.loads(path.read_text(encoding="utf-8"))
+    assert written["персонажи"][0]["описание"] == "Готовит и штопает. Скептична."
+    assert written["персонажи"][0]["внешность"] == "Кутается в шаль."
+
+
 def test_revealed_name_overwrites_the_provisional_card(tmp_path, monkeypatch):
     _isolate(tmp_path, monkeypatch)
     book_id, folder = _book("Форт")

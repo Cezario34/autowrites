@@ -105,8 +105,8 @@ def plot_from_model_text(raw: str) -> list[PlotChapter]:
 def supplement_plot_decision(
     existing: list[PlotChapter],
     proposed: list[PlotChapter],
-) -> tuple[str, list[PlotChapter]]:
-    """«same», если новых событий нет; «added», если сюжет только вырос; «lost», если ответ стёр уже записанное."""
+) -> tuple[str, list[PlotChapter], str]:
+    """«same», если новых событий нет; «added», если сюжет только вырос; «lost», если ответ стёр уже записанное. Третье значение — что именно потеряно."""
     existing_by = {chapter.number: chapter for chapter in existing}
     ordered: list[PlotChapter] = []
     proposed_by: dict[str, int] = {}
@@ -117,12 +117,18 @@ def supplement_plot_decision(
             ordered.append(chapter)
         else:
             ordered[slot] = chapter
+    problems: list[str] = []
     for number, current in existing_by.items():
         slot = proposed_by.get(number)
         incoming = ordered[slot] if slot is not None else None
         stored = current.description.strip()
-        if incoming is None or (stored and stored not in incoming.description.strip()):
-            return "lost", existing
+        if incoming is None:
+            problems.append(f"Пропала глава {number}.")
+            continue
+        if stored and stored not in incoming.description.strip():
+            problems.append(f"У главы {number} переписано описание.")
+    if problems:
+        return "lost", existing, " ".join(problems)
     added = any(number not in existing_by for number in proposed_by)
     if not added:
         added = any(
@@ -130,8 +136,8 @@ def supplement_plot_decision(
             for number, current in existing_by.items()
         )
     if not added:
-        return "same", existing
-    return "added", ordered
+        return "same", existing, ""
+    return "added", ordered, ""
 
 
 class PlotStore:
