@@ -4,10 +4,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.infrastructure.books import default_books_path
+from app.infrastructure.book_files import book_file
 
 
-def default_characters_path() -> Path:
-    return default_books_path().with_name("characters.json")
+def default_characters_dir() -> Path:
+    return default_books_path().parent / "characters"
 
 
 @dataclass(frozen=True)
@@ -41,56 +42,61 @@ def merge_characters(
     return ordered
 
 
+def _cards(items: list[dict]) -> list[Character]:
+    return [
+        Character(name=item["name"], description=item.get("description") or "")
+        for item in items
+    ]
+
+
 class CharacterStore:
-    def __init__(self, path: Path | None = None) -> None:
-        self.path = path or default_characters_path()
+    """Отдельный JSON на книгу: characters/<id книги>.json."""
+
+    def __init__(self, directory: Path | None = None) -> None:
+        self.directory = directory or default_characters_dir()
         self._lock = threading.Lock()
 
     def list_for_book(self, book_id: str) -> list[Character]:
         with self._lock:
-            return list(self._read().get(book_id, []))
+            path = book_file(self.directory, book_id, ".json")
+            if path.exists():
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                return _cards(payload.get("characters", []))
+            return list(self._legacy().get(book_id, []))
 
     def replace(self, book_id: str, characters: list[Character]) -> None:
         with self._lock:
-            books = self._read()
-            books[book_id] = list(characters)
-            self._write(books)
-
-    def _read(self) -> dict[str, list[Character]]:
-        if not self.path.exists():
-            return {}
-        payload = json.loads(self.path.read_text(encoding="utf-8"))
-        books: dict[str, list[Character]] = {}
-        for book_id, items in payload.get("books", {}).items():
-            books[book_id] = [
-                Character(
-                    name=item["name"],
-                    description=item.get("description") or "",
-                )
-                for item in items
-            ]
-        return books
-
-    def _write(self, books: dict[str, list[Character]]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_suffix(".json.tmp")
-        temporary.write_text(
-            json.dumps(
-                {
-                    "books": {
-                        book_id: [
-                            {"name": character.name, "description": character.description}
+            path = book_file(self.directory, book_id, ".json")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_suffix(".json.tmp")
+            temporary.write_text(
+                json.dumps(
+                    {
+                        "characters": [
+                            {
+                                "name": character.name,
+                                "description": character.description,
+                            }
                             for character in characters
                         ]
-                        for book_id, characters in books.items()
-                    }
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-        temporary.replace(self.path)
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            temporary.replace(path)
+
+    def _legacy(self) -> dict[str, list[Character]]:
+        """Старый общий characters.json, если отдельного файла книги ещё нет."""
+        path = self.directory.parent / "characters.json"
+        if not path.is_file():
+            return {}
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return {
+            stored_id: _cards(items)
+            for stored_id, items in payload.get("books", {}).items()
+        }
 
 
 character_store = CharacterStore()

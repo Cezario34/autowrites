@@ -19,3 +19,11 @@ class CharacterResponse(BaseModel):
 
 class CharacterListResponse(BaseModel):
     characters: list[CharacterResponse]
+
+
+class PlanResponse(BaseModel):
+    text: str
+
+
+class TextFileRequest(BaseModel):
+    text: str
