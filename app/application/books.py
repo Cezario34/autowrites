@@ -7,6 +7,7 @@ from app.core.prompts import (
     PLOT_SUPPLEMENT_SYSTEM_PROMPT,
     REVIEW_SYSTEM_PROMPT,
     SUGGEST_CHAPTER_SYSTEM_PROMPT,
+    SUGGESTED_CHAPTER_LIMIT,
     SUPPLEMENT_SYSTEM_PROMPT,
 )
 from app.infrastructure.book_files import CHARACTERS_FILE, PLAN_FILE, PLOT_FILE, library
@@ -262,6 +263,18 @@ def _section(title: str, body: str) -> str:
     return f"{title}:\n{body.strip() or '—'}"
 
 
+def limit_chapter(text: str, limit: int = SUGGESTED_CHAPTER_LIMIT) -> str:
+    """Обрезает главу до лимита, по возможности на конце предложения."""
+    chapter = text.strip()
+    if len(chapter) <= limit:
+        return chapter
+    window = chapter[:limit]
+    cut = max(window.rfind(mark) for mark in (".", "!", "?", "…", "\n"))
+    if cut >= limit * 3 // 4:
+        return window[: cut + 1].strip()
+    return window.rstrip()
+
+
 def suggest_chapter(book_id: str, direction: str, draft: str = "") -> tuple[str, str]:
     """Пишет продолжение по всем фрагментам книги и примерам диалогов и описаний."""
     require_book(book_id)
@@ -296,14 +309,17 @@ def suggest_chapter(book_id: str, direction: str, draft: str = "") -> tuple[str,
         len(fragments),
         model,
     )
-    chapter = openai_client.complete(
-        SUGGEST_CHAPTER_SYSTEM_PROMPT,
-        user,
-        temperature=None,
-        model=model,
-    ).strip()
+    chapter = limit_chapter(
+        openai_client.complete(
+            SUGGEST_CHAPTER_SYSTEM_PROMPT,
+            user,
+            temperature=None,
+            model=model,
+        )
+    )
     if not chapter:
         raise OpenAIRequestError("Модель не прислала главу")
+    logger.info("этап: глава предложена, символов=%s", len(chapter))
     return chapter, model
 
 

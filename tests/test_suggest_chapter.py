@@ -97,8 +97,8 @@ def test_suggest_sends_all_fragments_examples_and_sol_model(tmp_path, monkeypatc
     )
     assert response.status_code == 200
     assert response.json()["chapter"] == "Марта открыла дверь башни."
-    assert response.json()["model"] == "gpt-6.1-sol"
-    assert seen["model"] == "gpt-6.1-sol"
+    assert response.json()["model"] == "gpt-5.6"
+    assert seen["model"] == "gpt-5.6"
     assert seen["temperature"] is None
     assert seen["json_mode"] is False
     assert "Ульрика остаётся в башне на ночь" in seen["user"]
@@ -112,6 +112,28 @@ def test_suggest_sends_all_fragments_examples_and_sol_model(tmp_path, monkeypatc
     assert "— Куда ты?" in seen["user"]
     assert "Ветер нёс соль по камням." in seen["user"]
     assert "только текст главы" in seen["system"]
+    assert "5000" in seen["system"]
+
+
+def test_suggested_chapter_is_cut_to_five_thousand_characters(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    created = client.post("/api/books", json={"title": "Север"})
+    book_id = created.json()["id"]
+    monkeypatch.setattr(rag_service, "all_fragments", lambda book_id: [])
+
+    def complete(system, user, *, json_mode=False, temperature=0.2, model=None):
+        return ("Ульрика шла по двору. " * 400).strip()
+
+    monkeypatch.setattr(openai_client, "complete", complete)
+    response = client.post(
+        f"/api/books/{book_id}/suggest",
+        json={"prompt": "Довести её до башни"},
+    )
+    assert response.status_code == 200
+    chapter = response.json()["chapter"]
+    assert len(chapter) <= 5000
+    assert chapter.endswith(".")
+    assert response.json()["model"] == "gpt-5.6"
 
 
 def test_empty_direction_does_not_call_openai(tmp_path, monkeypatch):
