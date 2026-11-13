@@ -1,0 +1,169 @@
+import json
+
+from fastapi.testclient import TestClient
+
+from app.core.config import settings
+from app.infrastructure.book_files import library
+from app.infrastructure.books import book_store
+from app.infrastructure.openai_client import openai_client
+from app.main import app
+
+client = TestClient(app)
+
+
+def _isolate(tmp_path, monkeypatch):
+    monkeypatch.setattr(book_store, "path", tmp_path / "books.json")
+    monkeypatch.setattr(library, "root", tmp_path / "books")
+    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+
+
+def _book(title="Север"):
+    created = client.post("/api/books", json={"title": title})
+    assert created.status_code == 201
+    return created.json()["id"], tmp_folder(title)
+
+
+def tmp_folder(title):
+    return library.root / title
+
+
+def test_supplement_replaces_the_file_only_when_a_fact_is_added(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    book_id, folder = _book()
+    original = {
+        "персонажи": [
+            {
+                "имя": "Ульф",
+                "роль": "лесной охотник",
+                "описание": "Проводник.",
+                "внешность": "Тёмная борода.",
+            }
+        ]
+    }
+    path = folder / "characters.json"
+    path.write_text(json.dumps(original, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    seen = {}
+
+    def complete_json(system, user):
+        seen["system"] = system
+        seen["user"] = user
+        return json.dumps(
+            {
+                "персонажи": [
+                    {
+                        "имя": "Ульф",
+                        "роль": "лесной охотник",
+                        "описание": "Проводник. Честный и прямой.",
+                        "внешность": "Тёмная борода.",
+                    },
+                    {
+                        "имя": "Марта",
+                        "роль": "молодая женщина форта",
+                        "описание": "Помогает по хозяйству.",
+                        "внешность": "",
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+    monkeypatch.setattr(openai_client, "complete_json", complete_json)
+    chapter = "Ульф честный. {Марта} помогает по хозяйству."
+    saved = client.post(
+        f"/api/books/{book_id}/characters/supplement",
+        json={"text": chapter},
+    )
+    assert saved.status_code == 200
+    assert saved.json()["updated"] is True
+    assert [item["name"] for item in saved.json()["characters"]] == ["Ульф", "Марта"]
+    written = json.loads(path.read_text(encoding="utf-8"))
+    ulf = written["персонажи"][0]
+    assert ulf["описание"] == "Проводник. Честный и прямой."
+    assert ulf["внешность"] == "Тёмная борода."
+    assert written["персонажи"][1]["имя"] == "Марта"
+    assert "Ульф" in seen["user"]
+    assert chapter in seen["user"]
+    assert "только JSON" in seen["system"]
+
+    before = path.read_text(encoding="utf-8")
+
+    def same_json(system, user):
+        return json.dumps(written, ensure_ascii=False)
+
+    monkeypatch.setattr(openai_client, "complete_json", same_json)
+    again = client.post(
+        f"/api/books/{book_id}/characters/supplement",
+        json={"text": "В главе нет новых сведений."},
+    )
+    assert again.status_code == 200
+    assert again.json()["updated"] is False
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_supplement_does_not_replace_a_card_the_model_rewrote(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    book_id, folder = _book("Юг")
+    path = folder / "characters.json"
+    original = path.read_text(encoding="utf-8")
+    path.write_text(
+        json.dumps(
+            {
+                "персонажи": [
+                    {
+                        "имя": "Герта",
+                        "роль": "старая женщина форта",
+                        "описание": "Готовит и штопает.",
+                        "внешность": "Кутается в шаль.",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    stored = path.read_text(encoding="utf-8")
+
+    def complete_json(system, user):
+        return json.dumps(
+            {"персонажи": [{"имя": "Герта", "роль": "старуха", "описание": "Скептична.", "внешность": ""}]},
+            ensure_ascii=False,
+        )
+
+    monkeypatch.setattr(openai_client, "complete_json", complete_json)
+    response = client.post(
+        f"/api/books/{book_id}/characters/supplement",
+        json={"text": "Герта скептична."},
+    )
+    assert response.status_code == 400
+    assert "не трогал" in response.json()["detail"]
+    assert path.read_text(encoding="utf-8") == stored
+    assert original != stored
+
+
+def test_missing_key_and_empty_chapter_do_not_call_openai(tmp_path, monkeypatch):
+    _isolate(tmp_path, monkeypatch)
+    book_id, _folder = _book("Восток")
+    called = {"n": 0}
+    real_complete = openai_client.complete_json
+
+    def complete_json(system, user):
+        called["n"] += 1
+        raise AssertionError("вызов не нужен")
+
+    monkeypatch.setattr(openai_client, "complete_json", complete_json)
+    empty = client.post(
+        f"/api/books/{book_id}/characters/supplement",
+        json={"text": "   "},
+    )
+    assert empty.status_code == 400
+    assert empty.json()["detail"] == "Глава пустая"
+
+    monkeypatch.setattr(openai_client, "complete_json", real_complete)
+    monkeypatch.setattr(settings, "openai_api_key", "")
+    missing = client.post(
+        f"/api/books/{book_id}/characters/supplement",
+        json={"text": "Глава про торф."},
+    )
+    assert missing.status_code == 400
+    assert missing.json()["detail"] == "В окружении нет ключа OpenAI"
+    assert called["n"] == 0

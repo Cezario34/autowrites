@@ -5,6 +5,7 @@ from fastapi.responses import Response
 
 from app.application.books import (
     BookTitleTooLongError,
+    CharacterSupplementError,
     EmptyBookTitleError,
     EmptyChapterError,
     UnknownBookError,
@@ -13,17 +14,32 @@ from app.application.books import (
     list_characters,
     read_plan,
     save_chapter_text,
+    supplement_characters,
 )
+from app.infrastructure.openai_client import MissingOpenAIKeyError, OpenAIRequestError
 from app.presentation.schemas.book import (
     BookCreateRequest,
     BookResponse,
     CharacterListResponse,
     CharacterResponse,
+    CharacterSupplementResponse,
     PlanResponse,
     TextFileRequest,
 )
 
 router = APIRouter()
+
+
+def _character_payload(characters) -> list[CharacterResponse]:
+    return [
+        CharacterResponse(
+            name=character.name,
+            role=character.role,
+            description=character.description,
+            appearance=character.appearance,
+        )
+        for character in characters
+    ]
 
 
 def _response(book) -> BookResponse:
@@ -60,16 +76,32 @@ async def list_characters_endpoint(book_id: str):
         characters = list_characters(book_id)
     except UnknownBookError:
         raise HTTPException(status_code=400, detail="Книга не найдена") from None
-    return CharacterListResponse(
-        characters=[
-            CharacterResponse(
-                name=character.name,
-                role=character.role,
-                description=character.description,
-                appearance=character.appearance,
-            )
-            for character in characters
-        ]
+    return CharacterListResponse(characters=_character_payload(characters))
+
+
+@router.post(
+    "/api/books/{book_id}/characters/supplement",
+    response_model=CharacterSupplementResponse,
+)
+async def supplement_characters_endpoint(book_id: str, request: TextFileRequest):
+    try:
+        characters, updated = supplement_characters(book_id, request.text)
+    except UnknownBookError:
+        raise HTTPException(status_code=400, detail="Книга не найдена") from None
+    except EmptyChapterError:
+        raise HTTPException(status_code=400, detail="Глава пустая") from None
+    except MissingOpenAIKeyError:
+        raise HTTPException(
+            status_code=400,
+            detail="В окружении нет ключа OpenAI",
+        ) from None
+    except OpenAIRequestError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from None
+    except CharacterSupplementError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return CharacterSupplementResponse(
+        updated=updated,
+        characters=_character_payload(characters),
     )
 
 

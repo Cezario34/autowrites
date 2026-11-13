@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     chroma_persist_dir: str = "./chroma_db"
     collection_name: str = "chapters"
 
+    # OpenAI. Ключ читается из OPENAI_API_KEY, модель можно сменить через OPENAI_MODEL.
+    openai_api_key: str = ""
+    openai_model: str = "gpt-5.4-mini"
+    openai_base_url: str = "https://api.openai.com/v1"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

@@ -249,7 +249,9 @@
       <h1>Автописатель</h1>
       <p class="lead">
         «Сохранить как текст» кладёт главу в файл «глава 1», потом «глава 2»
-        и дальше по номеру. Рядом план этой книги и имена её персонажей.
+        и дальше по номеру. «Дополнить персонажей» отправляет главу и текущий
+        JSON в OpenAI: если есть новые сведения, этот JSON заменяет текст в
+        файле, если нет — файл не меняется.
       </p>
       <form id="book-form" class="books">
         <label>
@@ -270,6 +272,7 @@
           <button id="save-text" type="button">Сохранить как текст</button>
           <button id="check" class="secondary" type="button">Проверить по книге</button>
           <button id="save" class="secondary" type="button">Сохранить в базу</button>
+          <button id="supplement" class="secondary" type="button">Дополнить персонажей</button>
         </div>
       </form>
       <div class="progress" id="progress" hidden>
@@ -294,6 +297,7 @@
       const saveTextButton = document.querySelector("#save-text");
       const checkButton = document.querySelector("#check");
       const saveButton = document.querySelector("#save");
+      const supplementButton = document.querySelector("#supplement");
       const progress = document.querySelector("#progress");
       const status = document.querySelector("#status");
       const meta = document.querySelector("#meta");
@@ -426,6 +430,7 @@
           return;
         }
         saveTextButton.disabled = true;
+        supplementButton.disabled = true;
         try {
           const response = await fetch(
             "/api/books/" + encodeURIComponent(bookSelect.value) + "/text",
@@ -460,6 +465,42 @@
           showStatus(error.message || "Не удалось сохранить текст");
         } finally {
           saveTextButton.disabled = false;
+          supplementButton.disabled = false;
+        }
+      }
+
+      async function supplementCharacters() {
+        if (!bookSelect.value) {
+          showStatus("Сначала создайте или выберите книгу");
+          return;
+        }
+        if (!text.value.trim()) {
+          showStatus("Глава пустая");
+          return;
+        }
+        setBusy(true);
+        showProgress("Дополняю персонажей…");
+        try {
+          const response = await fetch(
+            "/api/books/" + encodeURIComponent(bookSelect.value) + "/characters/supplement",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ text: text.value }),
+            }
+          );
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(payload.detail || "Не удалось дополнить персонажей");
+          }
+          showCharacters(payload.characters);
+          progress.hidden = true;
+          showStatus(payload.updated ? "Персонажи дополнены" : "Новых сведений нет");
+        } catch (error) {
+          progress.hidden = true;
+          showStatus(error.message || "Не удалось дополнить персонажей");
+        } finally {
+          setBusy(false);
         }
       }
 
@@ -495,6 +536,8 @@
       function setBusy(busy) {
         checkButton.disabled = busy;
         saveButton.disabled = busy;
+        saveTextButton.disabled = busy;
+        supplementButton.disabled = busy;
       }
 
       async function runChapter(url) {
@@ -594,6 +637,12 @@
       saveTextButton.addEventListener("click", () => {
         saveAsText().catch((error) => {
           showStatus(error.message || "Не удалось сохранить текст");
+        });
+      });
+
+      supplementButton.addEventListener("click", () => {
+        supplementCharacters().catch((error) => {
+          showStatus(error.message || "Не удалось дополнить персонажей");
         });
       });
 

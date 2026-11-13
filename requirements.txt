@@ -8,3 +8,4 @@ ollama>=0.3.0
 
 # Удобства
 pydantic-settings>=2.6.0
+openai>=1.50.0
