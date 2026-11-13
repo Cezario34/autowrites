@@ -10,6 +10,13 @@ def test_prefers_frontend_inside_repository(tmp_path: Path):
     assert resolve_frontend_directory(tmp_path) == bundled
 
 
+def test_page_saves_text_and_shows_plan_beside_names():
+    page = Path("frontend/index.html").read_text(encoding="utf-8")
+    assert "Сохранить как текст" in page
+    assert "<h2>План</h2>" in page
+    assert 'names.join(", ")' in page
+
+
 def test_uses_sibling_frontend_when_repository_has_none(tmp_path: Path):
     repository = tmp_path / "autowrites"
     repository.mkdir()

@@ -20,7 +20,7 @@
         display: flex;
         gap: 1.5rem;
         align-items: flex-start;
-        max-width: 68rem;
+        max-width: 80rem;
         margin: 0 auto;
         padding: 2rem 1.25rem 3rem;
       }
@@ -32,7 +32,7 @@
       }
 
       aside {
-        flex: 0 0 20rem;
+        flex: 0 0 16rem;
         position: sticky;
         top: 1rem;
       }
@@ -43,16 +43,24 @@
         font-weight: 600;
       }
 
+      #plan,
       #characters {
         margin: 0;
         max-height: 70vh;
         overflow: auto;
-        white-space: pre-wrap;
         padding: 0.75rem;
         border: 1px solid #d4cfc4;
         border-radius: 6px;
         background: #fff;
-        font: 0.85rem/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+
+      #plan {
+        white-space: pre-wrap;
+        font: 0.95rem/1.45 "Iowan Old Style", Palatino, Georgia, serif;
+      }
+
+      #characters {
+        white-space: normal;
       }
 
       @media (max-width: 860px) {
@@ -180,12 +188,15 @@
   </head>
   <body>
     <div class="workspace">
+    <aside>
+      <h2>План</h2>
+      <pre id="plan"></pre>
+    </aside>
     <main>
       <h1>Автописатель</h1>
       <p class="lead">
-        Проверить — сверка с уже сохранённым текстом книги. Сохранить — модель
-        сама режет поданный текст на фрагменты и кладёт их в базу, а персонажей
-        выписывает отдельно. JSON персонажей виден справа.
+        «Сохранить как текст» записывает всю главу в обычный txt. Рядом с главой
+        план этой книги и имена её персонажей.
       </p>
       <form id="book-form" class="books">
         <label>
@@ -203,7 +214,8 @@
         <textarea id="text" name="text" required aria-describedby="char-count"></textarea>
         <p id="char-count" class="count">0 символов</p>
         <div class="actions">
-          <button id="check" type="button">Проверить по книге</button>
+          <button id="save-text" type="button">Сохранить как текст</button>
+          <button id="check" class="secondary" type="button">Проверить по книге</button>
           <button id="save" class="secondary" type="button">Сохранить в базу</button>
         </div>
       </form>
@@ -216,7 +228,7 @@
     </main>
     <aside>
       <h2>Персонажи</h2>
-      <pre id="characters">[]</pre>
+      <p id="characters"></p>
     </aside>
     </div>
     <script>
@@ -226,6 +238,7 @@
       const createBook = document.querySelector("#create-book");
       const text = document.querySelector("#text");
       const charCount = document.querySelector("#char-count");
+      const saveTextButton = document.querySelector("#save-text");
       const checkButton = document.querySelector("#check");
       const saveButton = document.querySelector("#save");
       const progress = document.querySelector("#progress");
@@ -233,6 +246,7 @@
       const meta = document.querySelector("#meta");
       const answer = document.querySelector("#answer");
       const characterPanel = document.querySelector("#characters");
+      const planPanel = document.querySelector("#plan");
 
       function symbolWord(count) {
         const mod100 = count % 100;
@@ -282,10 +296,12 @@
           bookSelect.value = current;
         }
         await loadCharacters();
+        await loadPlan();
       }
 
       function showCharacters(characters) {
-        characterPanel.textContent = JSON.stringify(characters || [], null, 2);
+        const names = (characters || []).map((item) => item.name).filter(Boolean);
+        characterPanel.textContent = names.join(", ");
       }
 
       async function loadCharacters() {
@@ -301,6 +317,72 @@
         }
         const payload = await response.json();
         showCharacters(payload.characters);
+      }
+
+      function showPlan(value) {
+        planPanel.textContent = value || "";
+      }
+
+      async function loadPlan() {
+        if (!bookSelect.value) {
+          showPlan("");
+          return;
+        }
+        const response = await fetch(
+          "/api/books/" + encodeURIComponent(bookSelect.value) + "/plan"
+        );
+        if (!response.ok) {
+          throw new Error("Не удалось загрузить план");
+        }
+        const payload = await response.json();
+        showPlan(payload.text);
+      }
+
+      async function saveAsText() {
+        if (!bookSelect.value) {
+          showStatus("Сначала создайте или выберите книгу");
+          return;
+        }
+        if (!text.value.trim()) {
+          showStatus("Глава пустая");
+          return;
+        }
+        saveTextButton.disabled = true;
+        try {
+          const response = await fetch(
+            "/api/books/" + encodeURIComponent(bookSelect.value) + "/text",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ text: text.value }),
+            }
+          );
+          const payload = await response.text();
+          if (!response.ok) {
+            let detail = "Не удалось сохранить текст";
+            try {
+              detail = JSON.parse(payload).detail || detail;
+            } catch (error) {
+              detail = payload || detail;
+            }
+            throw new Error(detail);
+          }
+          const disposition = response.headers.get("Content-Disposition") || "";
+          const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/);
+          const filename = encoded ? decodeURIComponent(encoded[1]) : "текст.txt";
+          const link = document.createElement("a");
+          link.href = URL.createObjectURL(
+            new Blob([payload], { type: "text/plain;charset=utf-8" })
+          );
+          link.download = filename;
+          link.click();
+          URL.revokeObjectURL(link.href);
+          showStatus("Текст сохранён в " + filename);
+        } catch (error) {
+          showStatus(error.message || "Не удалось сохранить текст");
+        } finally {
+          saveTextButton.disabled = false;
+        }
       }
 
       bookForm.addEventListener("submit", async (event) => {
@@ -425,6 +507,15 @@
       bookSelect.addEventListener("change", () => {
         loadCharacters().catch((error) => {
           showStatus(error.message || "Не удалось загрузить персонажей");
+        });
+        loadPlan().catch((error) => {
+          showStatus(error.message || "Не удалось загрузить план");
+        });
+      });
+
+      saveTextButton.addEventListener("click", () => {
+        saveAsText().catch((error) => {
+          showStatus(error.message || "Не удалось сохранить текст");
         });
       });
 

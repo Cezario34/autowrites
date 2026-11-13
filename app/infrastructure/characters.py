@@ -1,13 +1,8 @@
 import json
 import threading
 from dataclasses import dataclass
-from pathlib import Path
 
-from app.infrastructure.books import default_books_path
-
-
-def default_characters_path() -> Path:
-    return default_books_path().with_name("characters.json")
+from app.infrastructure.book_files import CHARACTERS_FILE, library
 
 
 @dataclass(frozen=True)
@@ -41,56 +36,61 @@ def merge_characters(
     return ordered
 
 
+def _cards(items: list[dict]) -> list[Character]:
+    return [
+        Character(name=item["name"], description=item.get("description") or "")
+        for item in items
+    ]
+
+
 class CharacterStore:
-    def __init__(self, path: Path | None = None) -> None:
-        self.path = path or default_characters_path()
+    """JSON персонажей лежит в папке книги: books/<id>/characters.json."""
+
+    def __init__(self) -> None:
         self._lock = threading.Lock()
 
     def list_for_book(self, book_id: str) -> list[Character]:
         with self._lock:
-            return list(self._read().get(book_id, []))
+            raw = library.read(book_id, CHARACTERS_FILE)
+            if raw.strip():
+                payload = json.loads(raw)
+                return _cards(payload.get("characters", []))
+            return list(self._legacy_combined().get(book_id, []))
 
     def replace(self, book_id: str, characters: list[Character]) -> None:
         with self._lock:
-            books = self._read()
-            books[book_id] = list(characters)
-            self._write(books)
-
-    def _read(self) -> dict[str, list[Character]]:
-        if not self.path.exists():
-            return {}
-        payload = json.loads(self.path.read_text(encoding="utf-8"))
-        books: dict[str, list[Character]] = {}
-        for book_id, items in payload.get("books", {}).items():
-            books[book_id] = [
-                Character(
-                    name=item["name"],
-                    description=item.get("description") or "",
-                )
-                for item in items
-            ]
-        return books
-
-    def _write(self, books: dict[str, list[Character]]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_suffix(".json.tmp")
-        temporary.write_text(
-            json.dumps(
-                {
-                    "books": {
-                        book_id: [
-                            {"name": character.name, "description": character.description}
+            path = library.folder(book_id) / CHARACTERS_FILE
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_suffix(".json.tmp")
+            temporary.write_text(
+                json.dumps(
+                    {
+                        "characters": [
+                            {
+                                "name": character.name,
+                                "description": character.description,
+                            }
                             for character in characters
                         ]
-                        for book_id, characters in books.items()
-                    }
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-        temporary.replace(self.path)
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(path)
+
+    def _legacy_combined(self) -> dict[str, list[Character]]:
+        """Старый общий characters.json, если в папке книги файла ещё нет."""
+        path = library.root.parent / "characters.json"
+        if not path.is_file():
+            return {}
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return {
+            stored_id: _cards(items)
+            for stored_id, items in payload.get("books", {}).items()
+        }
 
 
 character_store = CharacterStore()

@@ -5,8 +5,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.application.books import create_book
+from app.infrastructure.book_files import library
 from app.infrastructure.books import book_store
-from app.infrastructure.characters import character_store
 from app.infrastructure.ollama import ollama_client
 from app.infrastructure.vector_store import vector_store
 from app.main import app
@@ -19,7 +19,7 @@ client = TestClient(app)
 @pytest.fixture
 def book(tmp_path, monkeypatch):
     monkeypatch.setattr(book_store, "path", tmp_path / "books.json")
-    monkeypatch.setattr(character_store, "path", tmp_path / "characters.json")
+    monkeypatch.setattr(library, "root", tmp_path / "books")
     return create_book("Роман")
 
 

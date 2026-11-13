@@ -12,11 +12,23 @@ def default_books_path() -> Path:
     return Path(settings.chroma_persist_dir).expanduser().resolve().parent / "books.json"
 
 
+def folder_name(title: str, taken: set[str]) -> str:
+    cleaned = "".join(char if char not in '\\/:*?"<>|' else " " for char in title)
+    cleaned = " ".join(cleaned.split()) or "книга"
+    candidate = cleaned
+    number = 2
+    while candidate in taken or candidate in {".", ".."}:
+        candidate = f"{cleaned} {number}"
+        number += 1
+    return candidate
+
+
 @dataclass(frozen=True)
 class Book:
     id: str
     title: str
     created_at: str
+    folder: str
 
 
 class BookStore:
@@ -38,13 +50,15 @@ class BookStore:
         return None
 
     def create(self, title: str) -> Book:
-        book = Book(
-            id=str(uuid.uuid4()),
-            title=title,
-            created_at=datetime.now(timezone.utc).isoformat(),
-        )
         with self._lock:
             books = self._read()
+            folder = folder_name(title, {book.folder for book in books})
+            book = Book(
+                id=str(uuid.uuid4()),
+                title=title,
+                created_at=datetime.now(timezone.utc).isoformat(),
+                folder=folder,
+            )
             books.append(book)
             self._write(books)
         return book
@@ -58,6 +72,7 @@ class BookStore:
                 id=item["id"],
                 title=item["title"],
                 created_at=item["created_at"],
+                folder=item.get("folder") or item["id"],
             )
             for item in payload.get("books", [])
         ]
@@ -73,6 +88,7 @@ class BookStore:
                             "id": book.id,
                             "title": book.title,
                             "created_at": book.created_at,
+                            "folder": book.folder,
                         }
                         for book in books
                     ]
