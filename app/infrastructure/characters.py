@@ -1,14 +1,8 @@
 import json
 import threading
 from dataclasses import dataclass
-from pathlib import Path
 
-from app.infrastructure.books import default_books_path
-from app.infrastructure.book_files import book_file
-
-
-def default_characters_dir() -> Path:
-    return default_books_path().parent / "characters"
+from app.infrastructure.book_files import CHARACTERS_FILE, library
 
 
 @dataclass(frozen=True)
@@ -50,23 +44,22 @@ def _cards(items: list[dict]) -> list[Character]:
 
 
 class CharacterStore:
-    """Отдельный JSON на книгу: characters/<id книги>.json."""
+    """JSON персонажей лежит в папке книги: books/<id>/characters.json."""
 
-    def __init__(self, directory: Path | None = None) -> None:
-        self.directory = directory or default_characters_dir()
+    def __init__(self) -> None:
         self._lock = threading.Lock()
 
     def list_for_book(self, book_id: str) -> list[Character]:
         with self._lock:
-            path = book_file(self.directory, book_id, ".json")
-            if path.exists():
-                payload = json.loads(path.read_text(encoding="utf-8"))
+            raw = library.read(book_id, CHARACTERS_FILE)
+            if raw.strip():
+                payload = json.loads(raw)
                 return _cards(payload.get("characters", []))
-            return list(self._legacy().get(book_id, []))
+            return list(self._legacy_combined().get(book_id, []))
 
     def replace(self, book_id: str, characters: list[Character]) -> None:
         with self._lock:
-            path = book_file(self.directory, book_id, ".json")
+            path = library.folder(book_id) / CHARACTERS_FILE
             path.parent.mkdir(parents=True, exist_ok=True)
             temporary = path.with_suffix(".json.tmp")
             temporary.write_text(
@@ -82,14 +75,15 @@ class CharacterStore:
                     },
                     ensure_ascii=False,
                     indent=2,
-                ),
+                )
+                + "\n",
                 encoding="utf-8",
             )
             temporary.replace(path)
 
-    def _legacy(self) -> dict[str, list[Character]]:
-        """Старый общий characters.json, если отдельного файла книги ещё нет."""
-        path = self.directory.parent / "characters.json"
+    def _legacy_combined(self) -> dict[str, list[Character]]:
+        """Старый общий characters.json, если в папке книги файла ещё нет."""
+        path = library.root.parent / "characters.json"
         if not path.is_file():
             return {}
         payload = json.loads(path.read_text(encoding="utf-8"))

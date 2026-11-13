@@ -3,9 +3,8 @@ import json
 from fastapi.testclient import TestClient
 
 from app.core.config import settings
-from app.infrastructure.book_files import chapter_files, plan_files
+from app.infrastructure.book_files import library
 from app.infrastructure.books import book_store
-from app.infrastructure.characters import character_store
 from app.infrastructure.vector_store import VectorStore
 from app.main import app
 
@@ -14,9 +13,7 @@ client = TestClient(app)
 
 def _isolate_book_files(tmp_path, monkeypatch):
     monkeypatch.setattr(book_store, "path", tmp_path / "books.json")
-    monkeypatch.setattr(character_store, "directory", tmp_path / "characters")
-    monkeypatch.setattr(plan_files, "directory", tmp_path / "plans")
-    monkeypatch.setattr(chapter_files, "directory", tmp_path / "texts")
+    monkeypatch.setattr(library, "root", tmp_path / "books")
 
 
 def test_create_list_and_reject_blank_title(tmp_path, monkeypatch):
@@ -41,6 +38,13 @@ def test_create_list_and_reject_blank_title(tmp_path, monkeypatch):
     listed = client.get("/api/books")
     assert listed.status_code == 200
     assert [item["title"] for item in listed.json()] == ["Вторая", "Первая"]
+    for title in ("Первая", "Вторая"):
+        folder = tmp_path / "books" / title
+        assert (folder / "plan.txt").read_text(encoding="utf-8") == ""
+        assert (folder / "text.txt").read_text(encoding="utf-8") == ""
+        assert json.loads((folder / "characters.json").read_text(encoding="utf-8")) == {
+            "characters": []
+        }
 
 
 def test_unknown_book_has_no_character_list(tmp_path, monkeypatch):
@@ -54,7 +58,11 @@ def test_each_book_has_its_own_character_file_and_a_plan(tmp_path, monkeypatch):
     _isolate_book_files(tmp_path, monkeypatch)
     created = client.post("/api/books", json={"title": "Север"})
     book_id = created.json()["id"]
-    (tmp_path / "characters" / f"{book_id}.json").write_text(
+    folder = tmp_path / "books" / "Север"
+    assert (folder / "characters.json").is_file()
+    assert (folder / "plan.txt").read_text(encoding="utf-8") == ""
+    assert (folder / "text.txt").read_text(encoding="utf-8") == ""
+    (folder / "characters.json").write_text(
         json.dumps(
             {
                 "characters": [
@@ -66,7 +74,7 @@ def test_each_book_has_its_own_character_file_and_a_plan(tmp_path, monkeypatch):
         ),
         encoding="utf-8",
     )
-    (tmp_path / "plans" / f"{book_id}.txt").write_text(
+    (folder / "plan.txt").write_text(
         "1. Башня\n2. Конунг",
         encoding="utf-8",
     )
@@ -84,9 +92,12 @@ def test_each_book_has_its_own_character_file_and_a_plan(tmp_path, monkeypatch):
     plan = client.get(f"/api/books/{book_id}/plan")
     assert plan.status_code == 200
     assert plan.json() == {"text": "1. Башня\n2. Конунг"}
-    assert (tmp_path / "plans" / f"{other.json()['id']}.txt").read_text(
-        encoding="utf-8"
-    ) == ""
+    other_folder = tmp_path / "books" / "Юг"
+    assert (other_folder / "plan.txt").read_text(encoding="utf-8") == ""
+    assert (other_folder / "text.txt").read_text(encoding="utf-8") == ""
+    assert json.loads((other_folder / "characters.json").read_text(encoding="utf-8")) == {
+        "characters": []
+    }
 
 
 def test_save_as_text_writes_the_whole_chapter(tmp_path, monkeypatch):
@@ -100,7 +111,7 @@ def test_save_as_text_writes_the_whole_chapter(tmp_path, monkeypatch):
     assert saved.text == chapter
     assert saved.headers["content-type"].startswith("text/plain")
     assert "filename*=UTF-8''" in saved.headers["content-disposition"]
-    assert (tmp_path / "texts" / f"{book_id}.txt").read_text(encoding="utf-8") == chapter
+    assert (tmp_path / "books" / "Север быт" / "text.txt").read_text(encoding="utf-8") == chapter
 
     empty = client.post(f"/api/books/{book_id}/text", json={"text": "   "})
     assert empty.status_code == 400
