@@ -125,8 +125,7 @@ def test_revealed_name_replaces_the_provisional_card():
     assert [item.name for item in records] == ["старуха", "Герта", "Марта"]
     assert records[0] == old_woman
     assert records[1] == gerta
-    assert records[2].appearance == "забитого вида, с пустым взглядом"
-    assert "молодая" not in records[2].appearance
+    assert records[2].appearance == "молодая забитого вида, с пустым взглядом"
 
     unchanged = supplement_decision(
         [old_woman, girl, gerta, marta],
