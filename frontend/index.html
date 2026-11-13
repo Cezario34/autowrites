@@ -277,11 +277,9 @@
     <main>
       <h1>Автописатель</h1>
       <p class="lead">
-        «Сохранить как текст» кладёт главу в файл «глава 1», потом «глава 2»
-        и дальше по номеру. «Дополнить сюжет и персонажей» берёт эти файлы:
-        сначала коротко дописывает события в сюжет, затем дополняет персонажей.
-        «Проверить текст» сверяет вставленный фрагмент с этими JSON и пишет
-        замечания автору.
+        «Сохранить и дополнить» кладёт главу в файл «глава 1», потом «глава 2»
+        и сразу дописывает сюжет и персонажей. «Проверить текст» сверяет
+        вставленный фрагмент с этими JSON и пишет замечания автору.
       </p>
       <form id="book-form" class="books">
         <label>
@@ -299,10 +297,7 @@
         <textarea id="text" name="text" required aria-describedby="char-count"></textarea>
         <p id="char-count" class="count">0 символов</p>
         <div class="actions">
-          <button id="save-text" type="button">Сохранить как текст</button>
-          <button id="check" class="secondary" type="button">Проверить по книге</button>
-          <button id="save" class="secondary" type="button">Сохранить в базу</button>
-          <button id="supplement" class="secondary" type="button">Дополнить сюжет и персонажей</button>
+          <button id="save-text" type="button">Сохранить и дополнить</button>
           <button id="review" class="secondary" type="button">Проверить текст</button>
         </div>
       </form>
@@ -328,7 +323,6 @@
       const saveTextButton = document.querySelector("#save-text");
       const checkButton = document.querySelector("#check");
       const saveButton = document.querySelector("#save");
-      const supplementButton = document.querySelector("#supplement");
       const reviewButton = document.querySelector("#review");
       const progress = document.querySelector("#progress");
       const status = document.querySelector("#status");
@@ -490,7 +484,64 @@
         showPlan(payload.text);
       }
 
-      async function saveAsText() {
+      async function saveChapterFile() {
+        const response = await fetch(
+          "/api/books/" + encodeURIComponent(bookSelect.value) + "/text",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: text.value }),
+          }
+        );
+        const payload = await response.text();
+        if (!response.ok) {
+          let detail = "Не удалось сохранить текст";
+          try {
+            detail = JSON.parse(payload).detail || detail;
+          } catch (error) {
+            detail = payload || detail;
+          }
+          throw new Error(detail);
+        }
+        const disposition = response.headers.get("Content-Disposition") || "";
+        const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/);
+        const filename = encoded ? decodeURIComponent(encoded[1]) : "текст.txt";
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(
+          new Blob([payload], { type: "text/plain;charset=utf-8" })
+        );
+        link.download = filename;
+        link.click();
+        URL.revokeObjectURL(link.href);
+        return filename;
+      }
+
+      async function supplementFromFiles() {
+        const response = await fetch(
+          "/api/books/" + encodeURIComponent(bookSelect.value) + "/supplement",
+          { method: "POST" }
+        );
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(payload.detail || "Не удалось дополнить книгу");
+        }
+        showCharacters(payload.characters);
+        if (!plotPanel.hidden) {
+          showPlot(payload.plot || []);
+        }
+        const numbers = (payload.chapters || []).map((item) => item.number).join(", ");
+        const plotUpdated = (payload.chapters || []).some((item) => item.plot_updated);
+        const peopleUpdated = (payload.chapters || []).some((item) => item.characters_updated);
+        return (
+          "Глава " +
+          numbers +
+          ". " +
+          (plotUpdated ? "Сюжет дополнен. " : "Сюжет без изменений. ") +
+          (peopleUpdated ? "Персонажи дополнены." : "Персонажи без изменений.")
+        );
+      }
+
+      async function saveAndSupplement() {
         if (!bookSelect.value) {
           showStatus("Сначала создайте или выберите книгу");
           return;
@@ -499,82 +550,19 @@
           showStatus("Глава пустая");
           return;
         }
-        saveTextButton.disabled = true;
-        supplementButton.disabled = true;
-        reviewButton.disabled = true;
-        try {
-          const response = await fetch(
-            "/api/books/" + encodeURIComponent(bookSelect.value) + "/text",
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ text: text.value }),
-            }
-          );
-          const payload = await response.text();
-          if (!response.ok) {
-            let detail = "Не удалось сохранить текст";
-            try {
-              detail = JSON.parse(payload).detail || detail;
-            } catch (error) {
-              detail = payload || detail;
-            }
-            throw new Error(detail);
-          }
-          const disposition = response.headers.get("Content-Disposition") || "";
-          const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/);
-          const filename = encoded ? decodeURIComponent(encoded[1]) : "текст.txt";
-          const link = document.createElement("a");
-          link.href = URL.createObjectURL(
-            new Blob([payload], { type: "text/plain;charset=utf-8" })
-          );
-          link.download = filename;
-          link.click();
-          URL.revokeObjectURL(link.href);
-          showStatus("Текст сохранён в " + filename);
-        } catch (error) {
-          showStatus(error.message || "Не удалось сохранить текст");
-        } finally {
-          saveTextButton.disabled = false;
-          supplementButton.disabled = false;
-          reviewButton.disabled = false;
-        }
-      }
-
-      async function supplementCharacters() {
-        if (!bookSelect.value) {
-          showStatus("Сначала создайте или выберите книгу");
-          return;
-        }
         setBusy(true);
-        showProgress("Дополняю сюжет и персонажей…");
+        showProgress("Сохраняю главу…");
+        let filename = "";
         try {
-          const response = await fetch(
-            "/api/books/" + encodeURIComponent(bookSelect.value) + "/supplement",
-            { method: "POST" }
-          );
-          const payload = await response.json().catch(() => ({}));
-          if (!response.ok) {
-            throw new Error(payload.detail || "Не удалось дополнить книгу");
-          }
-          showCharacters(payload.characters);
-          if (!plotPanel.hidden) {
-            showPlot(payload.plot || []);
-          }
+          filename = await saveChapterFile();
+          showProgress("Дополняю сюжет и персонажей…");
+          const note = await supplementFromFiles();
           progress.hidden = true;
-          const numbers = (payload.chapters || []).map((item) => item.number).join(", ");
-          const plotUpdated = (payload.chapters || []).some((item) => item.plot_updated);
-          const peopleUpdated = (payload.chapters || []).some((item) => item.characters_updated);
-          showStatus(
-            "Глава " +
-              numbers +
-              ". " +
-              (plotUpdated ? "Сюжет дополнен. " : "Сюжет без изменений. ") +
-              (peopleUpdated ? "Персонажи дополнены." : "Персонажи без изменений.")
-          );
+          showStatus("Текст сохранён в " + filename + ". " + note);
         } catch (error) {
           progress.hidden = true;
-          showStatus(error.message || "Не удалось дополнить персонажей");
+          const saved = filename ? "Текст сохранён в " + filename + ". " : "";
+          showStatus(saved + (error.message || "Не удалось сохранить главу"));
         } finally {
           setBusy(false);
         }
@@ -610,11 +598,10 @@
       }
 
       function setBusy(busy) {
-        checkButton.disabled = busy;
-        saveButton.disabled = busy;
         saveTextButton.disabled = busy;
-        supplementButton.disabled = busy;
         reviewButton.disabled = busy;
+        if (checkButton) checkButton.disabled = busy;
+        if (saveButton) saveButton.disabled = busy;
       }
 
       async function reviewText() {
@@ -756,14 +743,8 @@
       });
 
       saveTextButton.addEventListener("click", () => {
-        saveAsText().catch((error) => {
-          showStatus(error.message || "Не удалось сохранить текст");
-        });
-      });
-
-      supplementButton.addEventListener("click", () => {
-        supplementCharacters().catch((error) => {
-          showStatus(error.message || "Не удалось дополнить персонажей");
+        saveAndSupplement().catch((error) => {
+          showStatus(error.message || "Не удалось сохранить главу");
         });
       });
 
@@ -773,8 +754,12 @@
         });
       });
 
-      checkButton.addEventListener("click", () => runChapter("/api/check-chapter"));
-      saveButton.addEventListener("click", () => runChapter("/api/save-chapter"));
+      if (checkButton) {
+        checkButton.addEventListener("click", () => runChapter("/api/check-chapter"));
+      }
+      if (saveButton) {
+        saveButton.addEventListener("click", () => runChapter("/api/save-chapter"));
+      }
 
       loadBooks().catch((error) => {
         showStatus(error.message || "Не удалось загрузить книги");
