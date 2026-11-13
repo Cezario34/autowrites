@@ -142,6 +142,20 @@ def read_plot(book_id: str) -> list[PlotChapter]:
     return sorted(plot_store.list_for_book(book_id), key=lambda chapter: int(chapter.number))
 
 
+SUPPLEMENT_ATTEMPTS = 3
+
+
+def _with_rejection(user: str, reason: str) -> str:
+    if not reason:
+        return user
+    return (
+        f"{user}\n\n"
+        "Предыдущий ответ отклонён, файл не менялся. "
+        f"{reason} "
+        "Верни JSON заново. Уже записанный текст оставь дословно."
+    )
+
+
 def supplement_plot(
     book_id: str,
     number: str,
@@ -153,35 +167,69 @@ def supplement_plot(
         raise EmptyChapterError
     existing = plot_store.list_for_book(book_id)
     stored = library.read(book_id, PLOT_FILE).strip() or plot_document(existing)
-    try:
-        raw = openai_client.complete_json(
-            PLOT_SUPPLEMENT_SYSTEM_PROMPT,
-            f"Текущий сюжет:\n{stored}\n\nЭто глава {number}. В поле «глава» поставь \"{number}\".\n\nТекст главы:\n{chapter}",
-        )
-        proposed = plot_from_model_text(raw)
-    except MissingOpenAIKeyError:
-        raise
-    except OpenAIRequestError:
-        raise
-    except (json.JSONDecodeError, TypeError, ValueError) as exc:
-        raise PlotSupplementError("Модель вернула не сюжет") from exc
-    decision, records = supplement_plot_decision(existing, proposed)
-    logger.info(
-        "этап: дополнение сюжета, глава=%s, было=%s, стало=%s, решение=%s",
-        number,
-        len(existing),
-        len(proposed),
-        decision,
+    base = (
+        f"Текущий сюжет:\n{stored}\n\n"
+        f"Это глава {number}. В поле «глава» поставь \"{number}\".\n\n"
+        f"Текст главы:\n{chapter}"
     )
-    if decision == "lost":
-        raise PlotSupplementError("Модель изменила уже записанный сюжет. Файл не трогал.")
-    present = {item.number for item in (records if decision == "added" else existing)}
-    if number not in present:
-        raise PlotSupplementError("Модель не добавила главу в сюжет. Файл не трогал.")
-    if decision == "same":
-        return existing, False
-    plot_store.replace(book_id, records)
-    return records, True
+    reason = ""
+    last_api: OpenAIRequestError | None = None
+    last_error = "Модель изменила уже записанный сюжет. Файл не трогал."
+    for attempt in range(1, SUPPLEMENT_ATTEMPTS + 1):
+        try:
+            raw = openai_client.complete_json(
+                PLOT_SUPPLEMENT_SYSTEM_PROMPT,
+                _with_rejection(base, reason),
+            )
+            proposed = plot_from_model_text(raw)
+        except MissingOpenAIKeyError:
+            raise
+        except OpenAIRequestError as exc:
+            last_api = exc
+            reason = "Сервис не ответил."
+            logger.info(
+                "этап: дополнение сюжета, глава=%s, попытка=%s, сервис не ответил",
+                number,
+                attempt,
+            )
+            continue
+        except (json.JSONDecodeError, TypeError, ValueError):
+            last_api = None
+            reason = "Ответ был не сюжетом."
+            last_error = "Модель вернула не сюжет"
+            logger.info(
+                "этап: дополнение сюжета, глава=%s, попытка=%s, ответ не разобран",
+                number,
+                attempt,
+            )
+            continue
+        decision, records, problem = supplement_plot_decision(existing, proposed)
+        logger.info(
+            "этап: дополнение сюжета, глава=%s, попытка=%s, было=%s, стало=%s, решение=%s",
+            number,
+            attempt,
+            len(existing),
+            len(proposed),
+            decision,
+        )
+        if decision == "lost":
+            last_api = None
+            reason = problem or "Уже записанный сюжет изменён."
+            last_error = "Модель изменила уже записанный сюжет. Файл не трогал."
+            continue
+        present = {item.number for item in (records if decision == "added" else existing)}
+        if number not in present:
+            last_api = None
+            reason = f"В ответе нет главы {number}."
+            last_error = "Модель не добавила главу в сюжет. Файл не трогал."
+            continue
+        if decision == "same":
+            return existing, False
+        plot_store.replace(book_id, records)
+        return records, True
+    if last_api is not None and reason == "Сервис не ответил.":
+        raise last_api
+    raise PlotSupplementError(last_error)
 
 
 def supplement_saved_chapters(
@@ -222,34 +270,57 @@ def supplement_characters(book_id: str, chapter: str) -> tuple[list[Character], 
     stored = library.read(book_id, CHARACTERS_FILE).strip()
     if not stored:
         stored = characters_document(existing)
-    try:
-        raw = openai_client.complete_json(
-            SUPPLEMENT_SYSTEM_PROMPT,
-            f"Текущие карточки:\n{stored}\n\nГлава:\n{chapter}",
+    base = f"Текущие карточки:\n{stored}\n\nГлава:\n{chapter}"
+    reason = ""
+    last_api: OpenAIRequestError | None = None
+    last_error = "Модель изменила уже записанные карточки. Файл не трогал."
+    for attempt in range(1, SUPPLEMENT_ATTEMPTS + 1):
+        try:
+            raw = openai_client.complete_json(
+                SUPPLEMENT_SYSTEM_PROMPT,
+                _with_rejection(base, reason),
+            )
+            proposed, identities = character_reply_from_model_text(raw)
+        except MissingOpenAIKeyError:
+            raise
+        except OpenAIRequestError as exc:
+            last_api = exc
+            reason = "Сервис не ответил."
+            logger.info(
+                "этап: дополнение персонажей, попытка=%s, сервис не ответил",
+                attempt,
+            )
+            continue
+        except (json.JSONDecodeError, TypeError, ValueError):
+            last_api = None
+            reason = "Ответ был не списком персонажей."
+            last_error = "Модель вернула не список персонажей"
+            logger.info(
+                "этап: дополнение персонажей, попытка=%s, ответ не разобран",
+                attempt,
+            )
+            continue
+        decision, records, problem = supplement_decision(existing, proposed, identities)
+        logger.info(
+            "этап: дополнение персонажей, попытка=%s, было=%s, стало=%s, тождества=%s, решение=%s",
+            attempt,
+            len(existing),
+            len(proposed),
+            len(identities),
+            decision,
         )
-        proposed, identities = character_reply_from_model_text(raw)
-    except MissingOpenAIKeyError:
-        raise
-    except OpenAIRequestError:
-        raise
-    except (json.JSONDecodeError, TypeError, ValueError) as exc:
-        raise CharacterSupplementError("Модель вернула не список персонажей") from exc
-    decision, records = supplement_decision(existing, proposed, identities)
-    logger.info(
-        "этап: дополнение персонажей, было=%s, стало=%s, тождества=%s, решение=%s",
-        len(existing),
-        len(proposed),
-        len(identities),
-        decision,
-    )
-    if decision == "lost":
-        raise CharacterSupplementError(
-            "Модель изменила уже записанные карточки. Файл не трогал."
-        )
-    if decision == "same":
-        return existing, False
-    character_store.replace(book_id, records)
-    return records, True
+        if decision == "lost":
+            last_api = None
+            reason = problem or "Уже записанные карточки изменены."
+            last_error = "Модель изменила уже записанные карточки. Файл не трогал."
+            continue
+        if decision == "same":
+            return existing, False
+        character_store.replace(book_id, records)
+        return records, True
+    if last_api is not None and reason == "Сервис не ответил.":
+        raise last_api
+    raise CharacterSupplementError(last_error)
 
 
 def review_chapter(book_id: str, text: str) -> str:

@@ -140,6 +140,7 @@ def test_plot_rewrite_does_not_touch_files_or_characters(tmp_path, monkeypatch):
 
     def complete_json(system, user):
         calls["n"] += 1
+        calls["user"] = user
         return json.dumps(
             {"сюжет": [{"глава": "2", "описание": "Хаген уходит."}]},
             ensure_ascii=False,
@@ -149,7 +150,9 @@ def test_plot_rewrite_does_not_touch_files_or_characters(tmp_path, monkeypatch):
     response = client.post(f"/api/books/{book_id}/supplement")
     assert response.status_code == 400
     assert "не трогал" in response.json()["detail"]
-    assert calls["n"] == 1
+    assert calls["n"] == 3
+    assert "Пропала глава 1" in calls["user"]
+    assert "файл не менялся" in calls["user"]
     assert (folder / "plot.json").read_text(encoding="utf-8") == stored_plot
     assert (folder / "characters.json").read_text(encoding="utf-8") == stored_people
 
