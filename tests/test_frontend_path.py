@@ -13,6 +13,8 @@ def test_prefers_frontend_inside_repository(tmp_path: Path):
 def test_page_saves_text_and_shows_plan_beside_names():
     page = Path("frontend/index.html").read_text(encoding="utf-8")
     assert "Сохранить как текст" in page
+    assert "Дополнить персонажей" in page
+    assert "/characters/supplement" in page
     assert "глава 1" in page
     assert "глава 2" in page
     assert "<h2>План</h2>" in page

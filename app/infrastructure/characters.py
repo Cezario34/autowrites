@@ -90,6 +90,84 @@ def _from_list(items: list) -> list[Character]:
     return characters
 
 
+def characters_document(characters: list[Character]) -> str:
+    return json.dumps(
+        {"персонажи": [character_record(character) for character in characters]},
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+def characters_from_model_text(raw: str) -> list[Character]:
+    text = raw.strip()
+    if text.startswith("```"):
+        text = text.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    payload = json.loads(text)
+    characters = characters_from_payload(payload)
+    if characters or is_empty_character_payload(payload):
+        return characters
+    raise json.JSONDecodeError("JSON не список персонажей", text, 0)
+
+
+def _card_key(name: str) -> str:
+    return name.casefold().strip()
+
+
+def _keeps_text(old: str, new: str) -> bool:
+    stored = old.strip()
+    return not stored or stored in new.strip()
+
+
+def _same_card(left: Character, right: Character) -> bool:
+    return (
+        left.role.strip() == right.role.strip()
+        and left.description.strip() == right.description.strip()
+        and left.appearance.strip() == right.appearance.strip()
+    )
+
+
+def supplement_decision(
+    existing: list[Character],
+    proposed: list[Character],
+) -> tuple[str, list[Character]]:
+    """«same», если новых сведений нет; «added», если список только вырос; «lost», если ответ стёр уже записанное."""
+    existing_by: dict[str, Character] = {}
+    for character in existing:
+        key = _card_key(character.name)
+        if key:
+            existing_by[key] = character
+    ordered: list[Character] = []
+    proposed_by: dict[str, int] = {}
+    for character in proposed:
+        key = _card_key(character.name)
+        if not key:
+            continue
+        slot = proposed_by.get(key)
+        if slot is None:
+            proposed_by[key] = len(ordered)
+            ordered.append(character)
+        else:
+            ordered[slot] = character
+    for key, current in existing_by.items():
+        slot = proposed_by.get(key)
+        incoming = ordered[slot] if slot is not None else None
+        if incoming is None or not (
+            _keeps_text(current.role, incoming.role)
+            and _keeps_text(current.description, incoming.description)
+            and _keeps_text(current.appearance, incoming.appearance)
+        ):
+            return "lost", existing
+    added = any(key not in existing_by for key in proposed_by)
+    if not added:
+        added = any(
+            not _same_card(current, ordered[proposed_by[key]])
+            for key, current in existing_by.items()
+        )
+    if not added:
+        return "same", existing
+    return "added", ordered
+
+
 def character_record(character: Character) -> dict[str, str]:
     return {
         "имя": character.name,

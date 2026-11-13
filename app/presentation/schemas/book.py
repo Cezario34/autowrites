@@ -23,6 +23,11 @@ class CharacterListResponse(BaseModel):
     characters: list[CharacterResponse]
 
 
+class CharacterSupplementResponse(BaseModel):
+    updated: bool
+    characters: list[CharacterResponse]
+
+
 class PlanResponse(BaseModel):
     text: str
 

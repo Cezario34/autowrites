@@ -1,9 +1,22 @@
+import json
 import logging
 from dataclasses import dataclass
 
-from app.infrastructure.book_files import PLAN_FILE, library
+from app.core.prompts import SUPPLEMENT_SYSTEM_PROMPT
+from app.infrastructure.book_files import CHARACTERS_FILE, PLAN_FILE, library
 from app.infrastructure.books import Book, book_store
-from app.infrastructure.characters import Character, character_store
+from app.infrastructure.characters import (
+    Character,
+    character_store,
+    characters_document,
+    characters_from_model_text,
+    supplement_decision,
+)
+from app.infrastructure.openai_client import (
+    MissingOpenAIKeyError,
+    OpenAIRequestError,
+    openai_client,
+)
 from app.infrastructure.vector_store import vector_store
 
 logger = logging.getLogger("app.books")
@@ -25,6 +38,10 @@ class UnknownBookError(Exception):
 
 class EmptyChapterError(Exception):
     """В файле нет текста."""
+
+
+class CharacterSupplementError(Exception):
+    """Ответ OpenAI нельзя записать вместо текущего JSON."""
 
 
 @dataclass(frozen=True)
@@ -72,6 +89,44 @@ def list_characters(book_id: str) -> list[Character]:
 def read_plan(book_id: str) -> str:
     require_book(book_id)
     return library.read(book_id, PLAN_FILE)
+
+
+def supplement_characters(book_id: str, chapter: str) -> tuple[list[Character], bool]:
+    """Просит OpenAI дополнить JSON персонажей и заменяет файл, только если сведения новые."""
+    require_book(book_id)
+    if not chapter.strip():
+        raise EmptyChapterError
+    existing = character_store.list_for_book(book_id)
+    stored = library.read(book_id, CHARACTERS_FILE).strip()
+    if not stored:
+        stored = characters_document(existing)
+    try:
+        raw = openai_client.complete_json(
+            SUPPLEMENT_SYSTEM_PROMPT,
+            f"Текущие карточки:\n{stored}\n\nГлава:\n{chapter}",
+        )
+        proposed = characters_from_model_text(raw)
+    except MissingOpenAIKeyError:
+        raise
+    except OpenAIRequestError:
+        raise
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise CharacterSupplementError("Модель вернула не список персонажей") from exc
+    decision, records = supplement_decision(existing, proposed)
+    logger.info(
+        "этап: дополнение персонажей, было=%s, стало=%s, решение=%s",
+        len(existing),
+        len(proposed),
+        decision,
+    )
+    if decision == "lost":
+        raise CharacterSupplementError(
+            "Модель изменила уже записанные карточки. Файл не трогал."
+        )
+    if decision == "same":
+        return existing, False
+    character_store.replace(book_id, records)
+    return records, True
 
 
 def save_chapter_text(book_id: str, text: str) -> tuple[Book, str, str]:
