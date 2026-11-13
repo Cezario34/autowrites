@@ -28,6 +28,23 @@ class CharacterSupplementResponse(BaseModel):
     characters: list[CharacterResponse]
 
 
+class PlotChapterResponse(BaseModel):
+    number: str
+    description: str
+
+
+class SavedChapterResultResponse(BaseModel):
+    number: str
+    plot_updated: bool
+    characters_updated: bool
+
+
+class BookSupplementResponse(BaseModel):
+    chapters: list[SavedChapterResultResponse]
+    plot: list[PlotChapterResponse]
+    characters: list[CharacterResponse]
+
+
 class PlanResponse(BaseModel):
     text: str
 

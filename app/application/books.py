@@ -2,8 +2,8 @@ import json
 import logging
 from dataclasses import dataclass
 
-from app.core.prompts import SUPPLEMENT_SYSTEM_PROMPT
-from app.infrastructure.book_files import CHARACTERS_FILE, PLAN_FILE, library
+from app.core.prompts import PLOT_SUPPLEMENT_SYSTEM_PROMPT, SUPPLEMENT_SYSTEM_PROMPT
+from app.infrastructure.book_files import CHARACTERS_FILE, PLAN_FILE, PLOT_FILE, library
 from app.infrastructure.books import Book, book_store
 from app.infrastructure.characters import (
     Character,
@@ -11,6 +11,13 @@ from app.infrastructure.characters import (
     characters_document,
     characters_from_model_text,
     supplement_decision,
+)
+from app.infrastructure.plot import (
+    PlotChapter,
+    plot_document,
+    plot_from_model_text,
+    plot_store,
+    supplement_plot_decision,
 )
 from app.infrastructure.openai_client import (
     MissingOpenAIKeyError,
@@ -42,6 +49,21 @@ class EmptyChapterError(Exception):
 
 class CharacterSupplementError(Exception):
     """Ответ OpenAI нельзя записать вместо текущего JSON."""
+
+
+class PlotSupplementError(Exception):
+    """Ответ OpenAI нельзя записать вместо сюжета."""
+
+
+class NoSavedChapterError(Exception):
+    """В папке книги ещё нет файла главы."""
+
+
+@dataclass(frozen=True)
+class SavedChapterResult:
+    number: str
+    plot_updated: bool
+    characters_updated: bool
 
 
 @dataclass(frozen=True)
@@ -89,6 +111,77 @@ def list_characters(book_id: str) -> list[Character]:
 def read_plan(book_id: str) -> str:
     require_book(book_id)
     return library.read(book_id, PLAN_FILE)
+
+
+def supplement_plot(
+    book_id: str,
+    number: str,
+    chapter: str,
+) -> tuple[list[PlotChapter], bool]:
+    """Сокращает главу до событий и заменяет plot.json, только если сведения новые."""
+    require_book(book_id)
+    if not chapter.strip():
+        raise EmptyChapterError
+    existing = plot_store.list_for_book(book_id)
+    stored = library.read(book_id, PLOT_FILE).strip() or plot_document(existing)
+    try:
+        raw = openai_client.complete_json(
+            PLOT_SUPPLEMENT_SYSTEM_PROMPT,
+            f"Текущий сюжет:\n{stored}\n\nЭто глава {number}. В поле «глава» поставь \"{number}\".\n\nТекст главы:\n{chapter}",
+        )
+        proposed = plot_from_model_text(raw)
+    except MissingOpenAIKeyError:
+        raise
+    except OpenAIRequestError:
+        raise
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise PlotSupplementError("Модель вернула не сюжет") from exc
+    decision, records = supplement_plot_decision(existing, proposed)
+    logger.info(
+        "этап: дополнение сюжета, глава=%s, было=%s, стало=%s, решение=%s",
+        number,
+        len(existing),
+        len(proposed),
+        decision,
+    )
+    if decision == "lost":
+        raise PlotSupplementError("Модель изменила уже записанный сюжет. Файл не трогал.")
+    present = {item.number for item in (records if decision == "added" else existing)}
+    if number not in present:
+        raise PlotSupplementError("Модель не добавила главу в сюжет. Файл не трогал.")
+    if decision == "same":
+        return existing, False
+    plot_store.replace(book_id, records)
+    return records, True
+
+
+def supplement_saved_chapters(
+    book_id: str,
+) -> tuple[list[SavedChapterResult], list[PlotChapter], list[Character]]:
+    """По файлам глав обновляет сюжет, затем теми же текстами дополняет персонажей."""
+    require_book(book_id)
+    files = library.saved_chapters(book_id)
+    saved = [(number, text) for number, text in files if text.strip()]
+    if not files:
+        raise NoSavedChapterError
+    if not saved:
+        raise EmptyChapterError
+    known = {chapter.number for chapter in plot_store.list_for_book(book_id)}
+    pending = [(number, text) for number, text in saved if number not in known]
+    if not pending:
+        pending = [saved[-1]]
+    results: list[SavedChapterResult] = []
+    for number, text in pending:
+        _, plot_updated = supplement_plot(book_id, number, text)
+        _, characters_updated = supplement_characters(book_id, text)
+        results.append(
+            SavedChapterResult(
+                number=number,
+                plot_updated=plot_updated,
+                characters_updated=characters_updated,
+            )
+        )
+    return results, plot_store.list_for_book(book_id), character_store.list_for_book(book_id)
 
 
 def supplement_characters(book_id: str, chapter: str) -> tuple[list[Character], bool]:

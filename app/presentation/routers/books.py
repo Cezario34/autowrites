@@ -8,6 +8,8 @@ from app.application.books import (
     CharacterSupplementError,
     EmptyBookTitleError,
     EmptyChapterError,
+    NoSavedChapterError,
+    PlotSupplementError,
     UnknownBookError,
     create_book,
     list_books,
@@ -15,15 +17,19 @@ from app.application.books import (
     read_plan,
     save_chapter_text,
     supplement_characters,
+    supplement_saved_chapters,
 )
 from app.infrastructure.openai_client import MissingOpenAIKeyError, OpenAIRequestError
 from app.presentation.schemas.book import (
     BookCreateRequest,
     BookResponse,
+    BookSupplementResponse,
     CharacterListResponse,
     CharacterResponse,
     CharacterSupplementResponse,
     PlanResponse,
+    PlotChapterResponse,
+    SavedChapterResultResponse,
     TextFileRequest,
 )
 
@@ -101,6 +107,48 @@ async def supplement_characters_endpoint(book_id: str, request: TextFileRequest)
         raise HTTPException(status_code=400, detail=str(exc)) from None
     return CharacterSupplementResponse(
         updated=updated,
+        characters=_character_payload(characters),
+    )
+
+
+@router.post(
+    "/api/books/{book_id}/supplement",
+    response_model=BookSupplementResponse,
+)
+async def supplement_saved_chapters_endpoint(book_id: str):
+    try:
+        results, plot, characters = supplement_saved_chapters(book_id)
+    except UnknownBookError:
+        raise HTTPException(status_code=400, detail="Книга не найдена") from None
+    except NoSavedChapterError:
+        raise HTTPException(
+            status_code=400,
+            detail="Сначала сохрани главу как текст",
+        ) from None
+    except EmptyChapterError:
+        raise HTTPException(status_code=400, detail="Глава пустая") from None
+    except MissingOpenAIKeyError:
+        raise HTTPException(
+            status_code=400,
+            detail="В окружении нет ключа OpenAI",
+        ) from None
+    except OpenAIRequestError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from None
+    except (PlotSupplementError, CharacterSupplementError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+    return BookSupplementResponse(
+        chapters=[
+            SavedChapterResultResponse(
+                number=item.number,
+                plot_updated=item.plot_updated,
+                characters_updated=item.characters_updated,
+            )
+            for item in results
+        ],
+        plot=[
+            PlotChapterResponse(number=item.number, description=item.description)
+            for item in plot
+        ],
         characters=_character_payload(characters),
     )
 
