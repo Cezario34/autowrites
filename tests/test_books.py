@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from app.core.config import settings
 from app.infrastructure.book_files import library
 from app.infrastructure.books import book_store
-from app.infrastructure.vector_store import VectorStore
+from app.infrastructure.vector_store import VectorStore, vector_store
 from app.main import app
 
 client = TestClient(app)
@@ -176,6 +176,72 @@ def test_save_as_text_writes_the_next_chapter(tmp_path, monkeypatch):
     assert empty.status_code == 400
     assert empty.json() == {"detail": "Глава пустая"}
     assert not (folder / "глава 5.txt").exists()
+
+
+def test_delete_removes_the_book_and_everything_tied_to_it(tmp_path, monkeypatch):
+    _isolate_book_files(tmp_path, monkeypatch)
+    created = client.post("/api/books", json={"title": "Север"})
+    book_id = created.json()["id"]
+    other = client.post("/api/books", json={"title": "Юг"})
+    other_id = other.json()["id"]
+    folder = tmp_path / "books" / "Север"
+    (folder / "глава 1.txt").write_text("Ульрика вошла.", encoding="utf-8")
+    (folder / "characters.json").write_text('{"персонажи": []}\n', encoding="utf-8")
+    parent = tmp_path
+    (parent / "characters").mkdir()
+    (parent / "plans").mkdir()
+    (parent / "texts").mkdir()
+    (parent / "characters" / f"{book_id}.json").write_text("[]", encoding="utf-8")
+    (parent / "plans" / f"{book_id}.txt").write_text("план", encoding="utf-8")
+    (parent / "texts" / f"{book_id}.txt").write_text("текст", encoding="utf-8")
+    (parent / "characters.json").write_text(
+        json.dumps({"books": {book_id: [], other_id: []}}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    removed = {"where": None}
+
+    def delete_where(where):
+        removed["where"] = where
+
+    monkeypatch.setattr(vector_store, "delete_where", delete_where)
+    response = client.delete(f"/api/books/{book_id}")
+    assert response.status_code == 200
+    assert response.json()["id"] == book_id
+    assert response.json()["title"] == "Север"
+    assert removed["where"] == {"book_id": book_id}
+    assert not folder.exists()
+    assert (tmp_path / "books" / "Юг").is_dir()
+    assert not (parent / "characters" / f"{book_id}.json").exists()
+    assert not (parent / "plans" / f"{book_id}.txt").exists()
+    assert not (parent / "texts" / f"{book_id}.txt").exists()
+    catalog = json.loads((parent / "characters.json").read_text(encoding="utf-8"))
+    assert book_id not in catalog["books"]
+    assert other_id in catalog["books"]
+    listed = client.get("/api/books")
+    assert [item["id"] for item in listed.json()] == [other_id]
+    missing = client.get(f"/api/books/{book_id}/characters")
+    assert missing.status_code == 400
+    again = client.delete(f"/api/books/{book_id}")
+    assert again.status_code == 400
+    assert again.json()["detail"] == "Книга не найдена"
+
+
+def test_vector_delete_keeps_the_other_book(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "chroma_persist_dir", str(tmp_path / "chroma"))
+    store = VectorStore()
+    store.add(
+        ids=["a-0", "b-0"],
+        embeddings=[[1.0, 0.0], [0.0, 1.0]],
+        documents=["только первая книга", "только вторая книга"],
+        metadatas=[
+            {"book_id": "book-a", "chapter_id": "c1", "chunk_index": 0},
+            {"book_id": "book-b", "chapter_id": "c2", "chunk_index": 0},
+        ],
+    )
+    store.delete_where({"book_id": "book-a"})
+    store.delete_where({"book_id": "missing"})
+    assert store.count_where({"book_id": "book-a"}) == 0
+    assert store.count_where({"book_id": "book-b"}) == 1
 
 
 def test_unknown_book_is_rejected_before_generation(tmp_path, monkeypatch):

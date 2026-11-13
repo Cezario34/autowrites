@@ -78,6 +78,11 @@ class VectorStore:
             where=where,
         )
 
+    def delete_where(self, where: dict[str, Any]) -> None:
+        if self.count_where(where) == 0:
+            return
+        self.collection.delete(where=where)
+
     def count(self) -> int:
         return self.collection.count()
 

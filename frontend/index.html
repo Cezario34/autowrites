@@ -318,6 +318,7 @@
           <input id="new-book" maxlength="200" placeholder="Название" />
         </label>
         <button id="create-book" class="secondary" type="submit">Создать</button>
+        <button id="delete-book" class="secondary" type="button">Удалить</button>
       </form>
       <form id="form">
         <label for="text">Глава</label>
@@ -362,6 +363,7 @@
       const bookSelect = document.querySelector("#book");
       const newBook = document.querySelector("#new-book");
       const createBook = document.querySelector("#create-book");
+      const deleteBookButton = document.querySelector("#delete-book");
       const text = document.querySelector("#text");
       const charCount = document.querySelector("#char-count");
       const saveTextButton = document.querySelector("#save-text");
@@ -410,7 +412,7 @@
           throw new Error("Не удалось загрузить книги");
         }
         const books = await response.json();
-        const current = selectedId || bookSelect.value;
+        const current = selectedId === undefined ? bookSelect.value : selectedId;
         bookSelect.replaceChildren();
         const placeholder = document.createElement("option");
         placeholder.value = "";
@@ -650,6 +652,7 @@
         saveTextButton.disabled = busy;
         reviewButton.disabled = busy;
         suggestButton.disabled = busy;
+        deleteBookButton.disabled = busy;
         if (checkButton) checkButton.disabled = busy;
         if (saveButton) saveButton.disabled = busy;
       }
@@ -812,6 +815,47 @@
           loadBooks(selected).catch(() => {});
         }
       }
+
+      async function deleteSelectedBook() {
+        if (!bookSelect.value) {
+          showStatus("Сначала создайте или выберите книгу");
+          return;
+        }
+        const id = bookSelect.value;
+        const label = bookSelect.selectedOptions[0]
+          ? bookSelect.selectedOptions[0].textContent
+          : "";
+        const title = label.replace(/ \(\d+\)$/, "");
+        if (!window.confirm("Удалить книгу «" + title + "» и всё, что с ней связано?")) {
+          return;
+        }
+        setBusy(true);
+        try {
+          const response = await fetch("/api/books/" + encodeURIComponent(id), {
+            method: "DELETE",
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(payload.detail || "Не удалось удалить книгу");
+          }
+          plotPanel.hidden = true;
+          plotPanel.replaceChildren();
+          answer.textContent = "";
+          meta.textContent = "";
+          await loadBooks("");
+          showStatus("Книга «" + payload.title + "» удалена");
+        } catch (error) {
+          showStatus(error.message || "Не удалось удалить книгу");
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      deleteBookButton.addEventListener("click", () => {
+        deleteSelectedBook().catch((error) => {
+          showStatus(error.message || "Не удалось удалить книгу");
+        });
+      });
 
       bookSelect.addEventListener("change", () => {
         plotPanel.hidden = true;

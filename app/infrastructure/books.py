@@ -63,6 +63,15 @@ class BookStore:
             self._write(books)
         return book
 
+    def delete(self, book_id: str) -> Book | None:
+        with self._lock:
+            books = self._read()
+            removed = next((book for book in books if book.id == book_id), None)
+            if removed is None:
+                return None
+            self._write([book for book in books if book.id != book_id])
+        return removed
+
     def _read(self) -> list[Book]:
         if not self.path.exists():
             return []

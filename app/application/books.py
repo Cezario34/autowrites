@@ -117,6 +117,16 @@ def create_book(title: str) -> BookDetails:
     return _details(book, chunk_count=0)
 
 
+def delete_book(book_id: str) -> BookDetails:
+    """Удаляет книгу, её папку и все фрагменты в базе."""
+    book = require_book(book_id)
+    library.remove(book_id)
+    vector_store.delete_where({"book_id": book_id})
+    book_store.delete(book_id)
+    logger.info("книга удалена: %s (%s)", book.title, book.id)
+    return _details(book, chunk_count=0)
+
+
 def list_characters(book_id: str) -> list[Character]:
     require_book(book_id)
     return character_store.list_for_book(book_id)

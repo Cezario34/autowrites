@@ -13,6 +13,7 @@ from app.application.books import (
     PlotSupplementError,
     UnknownBookError,
     create_book,
+    delete_book,
     list_books,
     list_characters,
     read_plan,
@@ -81,6 +82,15 @@ async def create_book_endpoint(request: BookCreateRequest):
             status_code=400,
             detail="Название книги слишком длинное",
         ) from None
+    return _response(book)
+
+
+@router.delete("/api/books/{book_id}", response_model=BookResponse)
+async def delete_book_endpoint(book_id: str):
+    try:
+        book = delete_book(book_id)
+    except UnknownBookError:
+        raise HTTPException(status_code=400, detail="Книга не найдена") from None
     return _response(book)
 
 
